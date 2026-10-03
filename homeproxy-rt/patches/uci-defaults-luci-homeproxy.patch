@@ -12,7 +12,11 @@
 +
  	delete firewall.homeproxy_post
  	commit firewall
-+
+ EOF
+@@ -33,4 +39,21 @@
+ [ ! -f /var/run/homeproxy/sing-box-c.json ] || \
+ 	/etc/init.d/homeproxy restart >/dev/null 2>&1 || \
+ 	printf '%s\n' 'HomeProxy: failed to restart the running service after upgrade.' >&2
 +# First boot: pre-download cn_ip.list so CN bypass works immediately.
 +# Without this, hp_cn4 is empty until the first scheduled update (hours).
 +# Retry in background, network may not be up yet on first boot.
@@ -29,4 +33,5 @@
 +		sleep 30
 +	done
 +) &
- EOF
++
+ exit 0

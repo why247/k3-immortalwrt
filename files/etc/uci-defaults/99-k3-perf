@@ -11,12 +11,16 @@ done
 for q in /sys/class/net/br-lan/queues/rx-*/rps_cpus; do
     [ -w "$q" ] && echo "3" > "$q" 2>/dev/null
 done
+# RFS: 接收流导向，同一连接固定 CPU，减缓存颠簸
+for f in /sys/class/net/eth0/queues/rx-*/rps_flow_cnt /sys/class/net/br-lan/queues/rx-*/rps_flow_cnt; do
+    [ -w "$f" ] && echo 32768 > "$f" 2>/dev/null
+done
 
 # --- 2. bgmac ring buffer 固定 (不支持 ethtool -G 改大小) ---
 # bgmac 默认 RX 512 / TX 128, 驱动写死, 跳过
 
 # --- 3. GRO/校验和 offload 保持开启 ---
-ethtool -K eth0 gro on rx on tx on 2>/dev/null
+ethtool -K eth0 gro off rx on tx on 2>/dev/null
 # 高爆发：中断合并 (bgmac 可能不支持，失败静默跳过)
 ethtool -C eth0 rx-usecs 100 tx-usecs 100 2>/dev/null
 ethtool -C eth1 rx-usecs 100 tx-usecs 100 2>/dev/null 2>/dev/null || true

@@ -1,0 +1,33 @@
+#!/bin/sh
+# K3 (BCM4709, 双核 ARMv7) 性能优化
+# 注意: K3 无 cpufreq, 不设 governor; 不手动绑 IRQ (收益≈0, 可能跟 RPS 打架);
+# sing-box nice 保持 0 (双核紧张, 负 nice 可能饿死 ksoftirqd)
+
+# --- 1. RPS: 软中断分发 (K3 主要手段, bgmac 单 NAPI) ---
+# 双核 -> mask 3
+for q in /sys/class/net/eth0/queues/rx-*/rps_cpus; do
+    [ -w "$q" ] && echo "3" > "$q" 2>/dev/null
+done
+for q in /sys/class/net/br-lan/queues/rx-*/rps_cpus; do
+    [ -w "$q" ] && echo "3" > "$q" 2>/dev/null
+done
+
+# --- 2. bgmac ring buffer 固定 (不支持 ethtool -G 改大小) ---
+# bgmac 默认 RX 512 / TX 128, 驱动写死, 跳过
+
+# --- 3. GRO/校验和 offload 保持开启 ---
+ethtool -K eth0 gro on rx on tx on 2>/dev/null
+
+# --- 4. 系统日志放 /tmp (不写 NAND) ---
+uci -q set system.@system[0].log_file='/tmp/system.log' 2>/dev/null
+uci -q set system.@system[0].log_size='64' 2>/dev/null
+uci -q commit system
+
+# --- 5. 确认软件流卸载关闭 (会绕过 TPROXY) ---
+uci -q set firewall.@defaults[0].flow_offloading='0'
+uci -q commit firewall
+
+# --- 6. Go 运行时 ---
+# HomeProxy 启动脚本已加 GODEBUG=madvdontneed=1
+
+exit 0

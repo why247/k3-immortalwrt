@@ -23,12 +23,13 @@ cp -r /tmp/viking-packages/sing-box package/sing-box
 rm -rf /tmp/viking-packages
 
 # K3 (BCM4709/Cortex-A9) 无 VFP/NEON, Go 必须软浮点编译, 否则 illegal instruction
-# 在 sing-box Makefile 开头强制 GOARM=5
+# OpenWrt golang-package.mk 用 GO_ARM (带下划线) 做 Makefile 变量, 传给 Go 时才叫 GOARM
+# 在 sing-box Makefile 开头强制 GO_ARM=5
 if [ -f package/sing-box/Makefile ]; then
-	sed -i '1i GOARM:=5' package/sing-box/Makefile
-	echo "GOARM=5 forced for sing-box"
+	sed -i '1i GO_ARM:=5' package/sing-box/Makefile
+	echo "GO_ARM=5 forced for sing-box"
 else
-	echo "WARNING: package/sing-box/Makefile not found, skipping GOARM fix" >&2
+	echo "WARNING: package/sing-box/Makefile not found, skipping GO_ARM fix" >&2
 fi
 
 # HomeProxy 补丁集：redirect/tproxy 改造 + 防火墙去重 + 原子回滚

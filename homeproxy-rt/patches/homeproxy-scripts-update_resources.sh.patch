@@ -1,0 +1,245 @@
+--- a/root/etc/homeproxy/scripts/update_resources.sh
++++ b/root/etc/homeproxy/scripts/update_resources.sh
+@@ -10,10 +10,12 @@
+ RUN_DIR="${RUN_DIR:-/var/run/$NAME}"
+ LOG_PATH="$RUN_DIR/$NAME.log"
+ RESULT_PATH="$RUN_DIR/update_resources.result"
+-GEOIP_SOURCE="${GEOIP_SOURCE:-https://cdn.jsdelivr.net/gh/SagerNet/sing-geoip@rule-set/geoip-cn.srs}"
+-GEOIP_VERSION_URL="${GEOIP_VERSION_URL:-https://github.com/SagerNet/sing-geoip/releases/latest}"
+-GEOSITE_SOURCE="${GEOSITE_SOURCE:-https://cdn.jsdelivr.net/gh/SagerNet/sing-geosite@rule-set-unstable/geosite-cn.srs}"
+-GEOSITE_VERSION_URL="${GEOSITE_VERSION_URL:-https://github.com/SagerNet/sing-geosite/releases/latest}"
++# Mainland China IP list (plain CIDR text) for the kernel-layer nftables
++# bypass. Built daily by MetaCubeX.
++CN_IP_SOURCE="${CN_IP_SOURCE:-https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@meta/geo/geoip/cn.list}"
++# Mainland China domain binary rule-set for sing-box (pre-compiled .srs,
++# same MetaCubeX data as the Mihomo .mrs used by Nikki).
++GEOSITE_SOURCE="${GEOSITE_SOURCE:-https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geosite/cn.srs}"
+ DASHBOARD_SOURCE="${DASHBOARD_SOURCE:-https://codeload.github.com/SagerNet/sing-box-dashboard/zip/refs/heads/gh-pages}"
+ DASHBOARD_VERSION_URL="${DASHBOARD_VERSION_URL:-https://github.com/SagerNet/sing-box-dashboard/commits/gh-pages.atom}"
+ USER_AGENT="HomeProxy resource updater"
+@@ -38,6 +40,7 @@
+ 	UPDATED_BRANCHES="${UPDATED_BRANCHES:+$UPDATED_BRANCHES,}$1"
+ 	case "$1" in
+ 	dashboard) DASHBOARD_UPDATED=1 ;;
++	cn_ip) ;; # Firewall-only resource, no sing-box reload needed
+ 	*) CORE_UPDATED=1 ;;
+ 	esac
+ }
+@@ -62,7 +65,9 @@
+ }
+ 
+ download() {
+-	run_curl -fsSL --compressed --retry 3 --retry-all-errors --retry-delay 1 \
++	# NOTE: --compressed omitted: Kwrt ships curl without zlib;
++	# the unknown option aborts every download (exit 2).
++	run_curl -fsSL --retry 3 --retry-all-errors --retry-delay 1 \
+ 		--connect-timeout 10 --max-time 60 -A "$USER_AGENT" -o "$2" "$1" &&
+ 		test -s "$2"
+ }
+@@ -71,22 +76,25 @@
+ 	"$SING_BOX" rule-set match -f binary "$1" 192.0.2.1 >/dev/null 2>&1
+ }
+ 
+-fetch_release_version() {
+-	local effective_url version
+-	effective_url="$(run_curl -fsSL --compressed --retry 3 --retry-all-errors \
+-		--retry-delay 1 --connect-timeout 10 --max-time 30 \
+-		-A "$USER_AGENT" -o /dev/null -w '%{url_effective}' "$1")" || return 1
+-	version="${effective_url##*/}"
+-	case "$version" in
+-	''|*[!0-9]*) return 1 ;;
+-	esac
+-	printf '%s\n' "$version"
++# MetaCubeX rule data has no release version; track content hash instead.
++file_hash() {
++	sha256sum "$1" 2>/dev/null | awk '{print $1}'
++}
++
++validate_cidr_list() {
++	local file="$1"
++	[ -s "$file" ] || return 1
++	# Every non-blank, non-comment line must be a CIDR; at least one entry.
++	if grep -vE '^[[:space:]]*(#|$)' "$file" | grep -Eqv '^[0-9a-fA-F:.]+/[0-9]{1,3}[[:space:]]*$'; then
++		return 1
++	fi
++	grep -Eq '^[0-9a-fA-F:.]+/[0-9]{1,3}[[:space:]]*$' "$file"
+ }
+ 
+ fetch_dashboard_version() {
+ 	local feed version
+ 
+-	feed="$(run_curl -fsSL --compressed --retry 3 --retry-all-errors \
++	feed="$(run_curl -fsSL --retry 3 --retry-all-errors \
+ 		--retry-delay 1 --connect-timeout 10 --max-time 30 \
+ 		-A "$USER_AGENT" "$DASHBOARD_VERSION_URL")" || return 1
+ 	version="$(printf '%s\n' "$feed" | awk -F '[<>]' '
+@@ -104,55 +112,57 @@
+ 	printf '%s\n' "$version"
+ }
+ 
+-versioned_url() {
+-	case "$1" in
+-	http://*|https://*) printf '%s?v=%s' "$1" "$2" ;;
+-	*) printf '%s' "$1" ;;
+-	esac
+-}
+-
+-install_rule_set() {
+-	local source_file="$1" version="$2" resource="$3"
++install_resource() {
++	local source_file="$1" version="$2" resource="$3" ext="$4"
+ 	local stage_dir="$RESOURCES_DIR/.update.$$.tmp"
+ 
+ 	mkdir -p "$stage_dir" &&
+-		cp "$source_file" "$stage_dir/$resource.srs" &&
++		cp "$source_file" "$stage_dir/$resource.$ext" &&
+ 		printf '%s\n' "$version" > "$stage_dir/$resource.ver" &&
+-		chmod 0644 "$stage_dir/$resource.srs" "$stage_dir/$resource.ver" &&
+-		mv -f "$stage_dir/$resource.srs" "$RESOURCES_DIR/$resource.srs" || return 1
++		chmod 0644 "$stage_dir/$resource.$ext" "$stage_dir/$resource.ver" &&
++		mv -f "$stage_dir/$resource.$ext" "$RESOURCES_DIR/$resource.$ext" || return 1
+ 	mark_updated "$resource"
+ 	mv -f "$stage_dir/$resource.ver" "$RESOURCES_DIR/$resource.ver"
+ }
+ 
+-update_rule_set() {
+-	local resource="$1" source_url="$2" version_url="$3"
+-	local version old_version
++update_hashed_resource() {
++	local resource="$1" source_url="$2" ext="$3" validator="$4"
++	local new_hash old_hash short
+ 
+-	if ! version="$(fetch_release_version "$version_url")"; then
+-		log "[$resource] Failed to get the latest version; continuing with other resources."
++	if ! download "$source_url" "$TMP_DIR/$resource.$ext"; then
++		log "[$resource] Update failed while downloading."
+ 		return 1
+ 	fi
+-	old_version="$(cat "$RESOURCES_DIR/$resource.ver" 2>/dev/null)"
+-	if [ "$old_version" = "$version" ] && validate_rule_set "$RESOURCES_DIR/$resource.srs"; then
+-		log "[$resource] Current version: $version."
+-		return 0
+-	fi
+-	log "[$resource] Local version: ${old_version:-NOT FOUND}, latest version: $version."
+-	if ! download "$(versioned_url "$source_url" "$version")" "$TMP_DIR/$resource.srs"; then
+-		log "[$resource] Update failed while downloading the rule set."
++	if ! "$validator" "$TMP_DIR/$resource.$ext"; then
++		log "[$resource] Update failed: downloaded file did not pass validation."
+ 		return 1
+ 	fi
++# P1-2: Reject truncated downloads. A half-downloaded file with valid CIDR
++# lines would pass validate_cidr_list, get its hash written to .ver, and
++# poison future runs ("Already up to date" forever). cn_ip.list normally
++# has 9000+ lines.
++	if [ "$resource" = "cn_ip" ]; then
++		lines=$(grep -cE '^[0-9a-fA-F:.]+/[0-9]{1,3}[[:space:]]*$' "$TMP_DIR/$resource.$ext")
++		if [ "$lines" -lt 8000 ]; then
++			log "[$resource] Update failed: suspiciously few entries ($lines), likely truncated download."
++			return 1
++		fi
++	fi
+-	if ! validate_rule_set "$TMP_DIR/$resource.srs"; then
+-		log "[$resource] Update failed: invalid binary rule set."
++	new_hash="$(file_hash "$TMP_DIR/$resource.$ext")"
++	if [ -z "$new_hash" ]; then
++		log "[$resource] Update failed: cannot hash the downloaded file."
+ 		return 1
+ 	fi
+-	if ! install_rule_set "$TMP_DIR/$resource.srs" "$version" "$resource"; then
+-		log "[$resource] Update failed while installing the rule set."
++	old_hash="$(cat "$RESOURCES_DIR/$resource.ver" 2>/dev/null)"
++	if [ "$new_hash" = "$old_hash" ] && [ -s "$RESOURCES_DIR/$resource.$ext" ]; then
++		short="$(printf '%s' "$new_hash" | cut -c1-12)"
++		log "[$resource] Already up to date ($short)."
++		return 0
++	fi
++	log "[$resource] Local version: ${old_hash:-NOT FOUND}, latest version: $(printf '%s' "$new_hash" | cut -c1-12)."
++	if ! install_resource "$TMP_DIR/$resource.$ext" "$new_hash" "$resource" "$ext"; then
++		log "[$resource] Update failed while installing."
+ 		return 1
+ 	fi
+ 	log "[$resource] Successfully updated."
+ }
+ 
++versioned_url() {
++	case "$1" in
++	http://*|https://*) printf '%s?v=%s' "$1" "$2" ;;
++	*) printf '%s' "$1" ;;
++	esac
++}
++
+ update_dashboard() {
+ 	local version old_version index source_dir=""
+ 	local backup_dir="${DASHBOARD_DIR}.old.$$"
+@@ -223,8 +233,16 @@
+ trap 'exit 130' INT
+ trap 'exit 143' TERM
+ 
++# P1-1: Prevent concurrent runs (cron every 5min + slow download = overlap).
++# flock(1) is a dependency; use non-blocking lock.
++LOCK_FILE="$RUN_DIR/update_resources.lock"
++exec 9>"$LOCK_FILE"
++if ! flock -n 9; then
++	log "[RESOURCES] Another update is running; skipping."
++	exit 0
++fi
++
+-update_rule_set "geoip_cn" "$GEOIP_SOURCE" "$GEOIP_VERSION_URL" || mark_failed "geoip_cn"
+-update_rule_set "geosite_cn" "$GEOSITE_SOURCE" "$GEOSITE_VERSION_URL" || mark_failed "geosite_cn"
++# Backup current cn_ip data BEFORE attempting update, so a failed
++# firewall refresh can restore the previous working data atomically.
++cn_ip_list="$RESOURCES_DIR/cn_ip.list"
++cn_ip_ver="$RESOURCES_DIR/cn_ip.ver"
++cn_ip_list_bak="$RESOURCES_DIR/cn_ip.list.bak"
++cn_ip_ver_bak="$RESOURCES_DIR/cn_ip.ver.bak"
++# P1-3: Verify backup integrity with cmp. If cp fails (disk full), the backup
++# would be empty/corrupt and rollback would destroy good data. Abort early.
++[ -f "$cn_ip_list" ] && cp -f "$cn_ip_list" "$cn_ip_list_bak" && \
++	cmp -s "$cn_ip_list" "$cn_ip_list_bak" || { log "[RESOURCES] CRITICAL: cn_ip.list backup failed, aborting."; exit 1; }
++[ -f "$cn_ip_ver" ] && cp -f "$cn_ip_ver" "$cn_ip_ver_bak" && \
++	cmp -s "$cn_ip_ver" "$cn_ip_ver_bak" || { log "[RESOURCES] CRITICAL: cn_ip.ver backup failed, aborting."; exit 1; }
++update_hashed_resource "cn_ip" "$CN_IP_SOURCE" "list" "validate_cidr_list" || mark_failed "cn_ip"
++update_hashed_resource "geosite_cn" "$GEOSITE_SOURCE" "srs" "validate_rule_set" || mark_failed "geosite_cn"
+ update_dashboard || mark_failed "dashboard"
+ 
+ if [ -n "$FAILED_BRANCHES" ]; then
+@@ -241,4 +259,39 @@
+ 	finish 3
+ fi
+ 
++# Refresh firewall rules if CN IPs were updated (nftables embeds the CIDRs).
++# The generated include is validated with nft --check before reloading: a
++# broken include aborts the entire fw4 reload and would leave the firewall
++# (and the transparent proxy) down, as happened with a duplicate-laden
++# upstream list. On any failure the previous working include AND the previous
++# data files are restored, so the daemon never sees a half-applied update
++# (new .ver on disk but old firewall) and won't trigger a bad service reload.
++case "$UPDATED_BRANCHES" in
++	*cn_ip*)
++		log "[RESOURCES] cn_ip updated, refreshing firewall rules."
++		client_nft="$RUN_DIR/fw4_client.nft"
++		client_nft_bak="$RUN_DIR/fw4_client.nft.bak"
++		[ -f "$client_nft" ] && cp -f "$client_nft" "$client_nft_bak"
++		if ucode "/etc/homeproxy/scripts/firewall_pre.uc" 2>&1 | tee -a "$LOG_FILE" &&
++		   fw4 print 2>&1 | tee -a "$LOG_FILE" | nft --check -f - 2>&1 | tee -a "$LOG_FILE" &&
++		   fw4 reload 2>&1 | tee -a "$LOG_FILE"; then
++			log "[RESOURCES] Firewall reloaded."
++			rm -f "$client_nft_bak" "$cn_ip_list_bak" "$cn_ip_ver_bak"
++		else
++			log "[RESOURCES] Firewall update failed; restoring previous rules and data."
++			[ -f "$cn_ip_list_bak" ] && cp -f "$cn_ip_list_bak" "$cn_ip_list"
++			[ -f "$cn_ip_ver_bak" ] && cp -f "$cn_ip_ver_bak" "$cn_ip_ver"
++			if [ -f "$client_nft_bak" ]; then
++				cp -f "$client_nft_bak" "$client_nft"
++				if fw4 reload >/dev/null 2>&1; then
++					log "[RESOURCES] Previous firewall rules restored."
++				else
++					log "[RESOURCES] CRITICAL: failed to restore firewall rules."
++				fi
++				rm -f "$client_nft_bak" "$cn_ip_list_bak" "$cn_ip_ver_bak"
++			fi
++		fi
++		;;
++esac
++
+ finish 0

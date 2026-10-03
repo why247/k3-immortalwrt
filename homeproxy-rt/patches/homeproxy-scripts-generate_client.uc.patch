@@ -180,7 +180,7 @@
 +config.experimental = {
 +	cache_file: {
 +		enabled: true,
-+		path: '/etc/homeproxy/sing-box/cache.db',
++		path: '/tmp/sing-box-cache.db',
 +		store_fakeip: true,
 +		store_dns: true
 +	}

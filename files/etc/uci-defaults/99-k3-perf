@@ -17,6 +17,9 @@ done
 
 # --- 3. GRO/校验和 offload 保持开启 ---
 ethtool -K eth0 gro on rx on tx on 2>/dev/null
+# 高爆发：中断合并 (bgmac 可能不支持，失败静默跳过)
+ethtool -C eth0 rx-usecs 100 tx-usecs 100 2>/dev/null
+ethtool -C eth1 rx-usecs 100 tx-usecs 100 2>/dev/null 2>/dev/null || true
 
 # --- 4. 系统日志放 /tmp (不写 NAND) ---
 uci -q set system.@system[0].log_file='/tmp/system.log' 2>/dev/null

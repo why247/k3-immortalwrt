@@ -43,6 +43,25 @@ if [ -d "$HP_RT" ]; then
     exit 1
   }
   echo "HomeProxy patches applied successfully"
+  # Pre-seed fresh cn_ip.list at build time (150K, baked into firmware).
+  # Falls back to the bundled copy if download fails.
+  CN_IP_DIR="package/luci-app-homeproxy/root/etc/homeproxy/resources"
+  mkdir -p "$CN_IP_DIR"
+  if curl -fsSL --retry 3 --max-time 60 \
+      "https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@meta/geo/geoip/cn.list" \
+      -o "$CN_IP_DIR/cn_ip.list.tmp"; then
+    if [ "$(wc -l < "$CN_IP_DIR/cn_ip.list.tmp")" -ge 8000 ]; then
+      mv "$CN_IP_DIR/cn_ip.list.tmp" "$CN_IP_DIR/cn_ip.list"
+      date -u +%Y-%m-%d > "$CN_IP_DIR/cn_ip.ver"
+      echo "Pre-seeded fresh cn_ip.list ($(wc -l < "$CN_IP_DIR/cn_ip.list") lines)"
+    else
+      echo "WARNING: downloaded cn_ip.list too small, keeping bundled copy" >&2
+      rm -f "$CN_IP_DIR/cn_ip.list.tmp"
+    fi
+  else
+    echo "WARNING: cn_ip.list download failed, keeping bundled copy" >&2
+    rm -f "$CN_IP_DIR/cn_ip.list.tmp"
+  fi
 else
   echo "WARNING: homeproxy-rt patch set not found at $HP_RT, building unpatched HomeProxy" >&2
 fi

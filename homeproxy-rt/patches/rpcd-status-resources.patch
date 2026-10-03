@@ -1,0 +1,56 @@
+--- a/root/usr/share/rpcd/ucode/luci.homeproxy
++++ b/root/usr/share/rpcd/ucode/luci.homeproxy
+@@ -21,12 +21,12 @@
+ }
+ 
+ const RESOURCES = {
+-	geoip_cn: {
+-		source: 'https://cdn.jsdelivr.net/gh/SagerNet/sing-geoip@rule-set/geoip-cn.srs',
+-		version: `${HP_DIR}/resources/geoip_cn.ver`
++	cn_ip: {
++		source: 'https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@meta/geo/geoip/cn.list',
++		version: `${HP_DIR}/resources/cn_ip.ver`
+ 	},
+ 	geosite_cn: {
+-		source: 'https://cdn.jsdelivr.net/gh/SagerNet/sing-geosite@rule-set-unstable/geosite-cn.srs',
++		source: 'https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geosite/cn.srs',
+ 		version: `${HP_DIR}/resources/geosite_cn.ver`
+ 	},
+ 	dashboard: {
+--- a/htdocs/luci-static/resources/view/homeproxy/status.js
++++ b/htdocs/luci-static/resources/view/homeproxy/status.js
+@@ -153,8 +153,8 @@
+ 
+ const resources = [
+ 	{
+-		type: 'geoip_cn',
+-		name: _('China IP rule set')
++		type: 'cn_ip',
++		name: _('China IP list')
+ 	},
+ 	{
+ 		type: 'geosite_cn',
+--- a/po/zh_Hans/homeproxy.po
++++ b/po/zh_Hans/homeproxy.po
+@@ -299,8 +299,8 @@
+ msgstr "国内 DNS 服务器"
+ 
+ #: luci-app-homeproxy/htdocs/luci-static/resources/view/homeproxy/status.js:157
+-msgid "China IP rule set"
+-msgstr "国内 IP 规则集"
++msgid "China IP list"
++msgstr "国内 IP 名单"
+ 
+ #: luci-app-homeproxy/htdocs/luci-static/resources/view/homeproxy/status.js:161
+ msgid "China domain rule set"
+--- a/po/templates/homeproxy.pot
++++ b/po/templates/homeproxy.pot
+@@ -291,7 +291,7 @@
+ msgstr ""
+ 
+ #: luci-app-homeproxy/htdocs/luci-static/resources/view/homeproxy/status.js:157
+-msgid "China IP rule set"
++msgid "China IP list"
+ msgstr ""
+ 
+ #: luci-app-homeproxy/htdocs/luci-static/resources/view/homeproxy/status.js:161

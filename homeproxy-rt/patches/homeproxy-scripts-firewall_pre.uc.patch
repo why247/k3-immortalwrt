@@ -1,0 +1,180 @@
+--- a/root/etc/homeproxy/scripts/firewall_pre.uc
++++ b/root/etc/homeproxy/scripts/firewall_pre.uc
+@@ -2,9 +2,9 @@
+ 
+ 'use strict';
+ 
+-import { writefile } from 'fs';
++import { readfile, writefile } from 'fs';
+ import { cursor } from 'uci';
+-import { RUN_DIR } from 'homeproxy';
++import { HP_DIR, RUN_DIR, normalizeList } from 'homeproxy';
+ 
+ const cfgname = 'homeproxy';
+ const uci = cursor();
+@@ -24,3 +24,155 @@
+ 
+ if (writefile(input_file, length(input) ? join('\n', input) + '\n' : '') === null)
+ 	exit(1);
++
++/* Transparent proxy (redirect + tproxy) nftables rules.
++ *
++ * Included into the fw4 table via a table-post include
++ * (/var/run/homeproxy/fw4_client.nft). Rule order inside each chain:
++ *   1. sing-box's own sockets (routing_mark) bypass everything
++ *   2. reserved / private / multicast addresses bypass
++ *   3. manually configured WAN direct destinations bypass
++ *   4. mainland China IPs bypass in the kernel, never reaching sing-box
++ *   5. everything else goes to the transparent proxy
++ *
++ * Only generated when the client instance is enabled; in server-only
++ * mode the include stays empty so no traffic is intercepted.
++ */
++
++// Client is enabled if main_node is set (uci.get works, no env var needed)
++const main_node = uci.get(cfgname, 'config', 'main_node');
++const client_enabled = (main_node !== null && main_node !== '' && main_node !== 'nil');
++
++let nft = [];
++
++if (client_enabled) {
++const redirect_port = uci.get(cfgname, 'infra', 'redirect_port') || '5331';
++const tproxy_port = uci.get(cfgname, 'infra', 'tproxy_port') || '5332';
++const self_mark = uci.get(cfgname, 'infra', 'self_mark') || '100';
++const tproxy_mark = uci.get(cfgname, 'infra', 'tproxy_mark') || '101';
++const ipv6_support = uci.get(cfgname, 'config', 'ipv6_support') || '0';
++const listen_interfaces = normalizeList(uci.get(cfgname, 'control', 'listen_interfaces'));
++
++function load_cidr_file(path) {
++	const content = readfile(path);
++	if (content == null)
++		return [];
++	let seen = {};
++	let result = [];
++	for (let line in split(content, '\n')) {
++		line = trim(line);
++		if (line == '' || substr(line, 0, 1) == '#')
++			continue;
++		if (!match(line, /^[0-9a-fA-F:.]+\/[0-9]{1,3}$/)) {
++			warn(`Skipping invalid CIDR entry: ${line}\n`);
++			continue;
++		}
++		/* nftables rejects duplicate set elements with EEXIST, which
++		 * aborts the entire fw4 reload and leaves the firewall (and the
++		 * transparent proxy) broken. Upstream lists have shipped
++		 * duplicates before, so dedup here while preserving order. */
++		if (seen[line])
++			continue;
++		seen[line] = 1;
++		push(result, line);
++	}
++	return result;
++}
++
++function split_families(cidrs) {
++	let v4 = [], v6 = [];
++	for (let cidr in cidrs) {
++		if (match(cidr, /:/))
++			push(v6, cidr);
++		else
++			push(v4, cidr);
++	}
++	return [v4, v6];
++}
++
++function uci_cidrs(section, options) {
++	let result = [];
++	for (let option in options) {
++		for (let value in normalizeList(uci.get(cfgname, section, option))) {
++			value = trim(value);
++			if (value == '')
++				continue;
++			if (!match(value, /\//))
++				value += match(value, /:/) ? '/128' : '/32';
++			if (match(value, /^[0-9a-fA-F:.]+\/[0-9]{1,3}$/))
++				push(result, value);
++		}
++	}
++	return result;
++}
++
++function nft_set(name, type, cidrs) {
++	let decl = `set ${name} {\n\ttype ${type}\n\tflags interval,auto-merge\n`;
++	/* auto-merge: collapse adjacent CIDRs (e.g. two /24 -> one /23),
++	 * fewer rbtree nodes, faster lookups. Zero risk, pure frontend opt. */
++	if (length(cidrs))
++		decl += `\telements = { ${join(', ', cidrs)} }\n`;
++	decl += '}\n';
++	return decl;
++}
++
++/* Bypass rules shared by all four transparent-proxy chains. */
++function proxy_bypass_rules(is_prerouting) {
++	let rules = [];
++	push(rules, `\tmeta mark ${self_mark} counter return`);
++	if (is_prerouting && length(listen_interfaces))
++		push(rules, `\tiifname != { "${join('", "', listen_interfaces)}" } counter return`);
++	push(rules, 'udp dport { 67, 68 } counter return');
++	push(rules, 'udp dport { 546, 547 } counter return');
++	push(rules, '\tip daddr @hp_local4 counter return');
++	push(rules, '\tip daddr @hp_wan_direct4 counter return');
++	push(rules, '\tip daddr @hp_cn4 counter return');
++	if (ipv6_support === '1') {
++		push(rules, '\tip6 daddr @hp_local6 counter return');
++		push(rules, '\tip6 daddr @hp_wan_direct6 counter return');
++		push(rules, '\tip6 daddr @hp_cn6 counter return');
++	}
++	return rules;
++}
++
++function nft_chain(name, hook, prerouting, action) {
++	let out = `chain ${name} {\n\t${hook}; policy accept;\n`;
++	for (let rule in proxy_bypass_rules(prerouting))
++		out += rule + '\n';
++	out += `\t${action}\n}\n`;
++	return out;
++}
++
++const cn_families = split_families(load_cidr_file(HP_DIR + '/resources/cn_ip.list'));
++const wan_direct_families = split_families(uci_cidrs('control', ['wan_direct_ipv4_ips', 'wan_direct_ipv6_ips']));
++
++push(nft, nft_set('hp_cn4', 'ipv4_addr', cn_families[0]));
++push(nft, nft_set('hp_cn6', 'ipv6_addr', cn_families[1]));
++push(nft, nft_set('hp_wan_direct4', 'ipv4_addr', wan_direct_families[0]));
++push(nft, nft_set('hp_wan_direct6', 'ipv6_addr', wan_direct_families[1]));
++push(nft, nft_set('hp_local4', 'ipv4_addr',
++	['127.0.0.0/8', '10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16', '169.254.0.0/16', '224.0.0.0/4', '255.255.255.255/32']));
++push(nft, nft_set('hp_local6', 'ipv6_addr',
++	['::1/128', 'fd00::/8', 'fe80::/10', 'ff00::/8']));
++/* NOTE: fc00::/7 replaced by fd00::/8 to avoid swallowing sing-box Fake-IP
++ * v6 range fc00::/18. Real ULA home networks use fd00::/8; fc00::/8 (excl.
++ * fakeip) is practically unused. */
++
++/* TCP: LAN clients and router-local traffic via nftables redirect. */
++push(nft, nft_chain('hp_redirect_pre',
++	'type nat hook prerouting priority dstnat', true,
++	`meta l4proto tcp redirect to :${redirect_port}`));
++push(nft, nft_chain('hp_redirect_out',
++	'type nat hook output priority dstnat', false,
++	`meta l4proto tcp redirect to :${redirect_port}`));
++
++/* UDP: LAN clients via TPROXY; router-local traffic is marked here and
++ * picked up by the fwmark policy route (see init.d) into the TPROXY socket. */
++/* DIVERT: fast path for established UDP flows. Matches packets already
++ * bound to the transparent TPROXY socket, skips all bypass rules and the
++ * 12k CIDR lookups. Standard XTLS/mihomo technique. Needs kmod-nft-socket. */
++push(nft, 'chain hp_divert_pre {\n\ttype filter hook prerouting priority mangle - 5; policy accept;\n' +
++	`\tsocket transparent 1 meta mark set ${tproxy_mark} counter accept\n};`);
++push(nft, nft_chain('hp_tproxy_pre',
++	'type filter hook prerouting priority mangle', true,
++	`meta l4proto udp tproxy to :${tproxy_port}`));
++push(nft, nft_chain('hp_tproxy_out',
++	'type route hook output priority mangle', false,
++	`meta l4proto udp meta mark set ${tproxy_mark}`));
++
++} /* if (client_enabled) */
++
++const client_file = RUN_DIR + '/fw4_client.nft';
++if (writefile(client_file, length(nft) ? join('\n', nft) + '\n' : '') === null)
++	exit(1);
++

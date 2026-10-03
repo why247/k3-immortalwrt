@@ -73,7 +73,7 @@
  		--retry-delay 1 --connect-timeout 10 --max-time 30 \
  		-A "$USER_AGENT" "$DASHBOARD_VERSION_URL")" || return 1
  	version="$(printf '%s\n' "$feed" | awk -F '[<>]' '
-@@ -104,55 +112,57 @@
+@@ -104,55 +112,68 @@
  	printf '%s\n' "$version"
  }
  
@@ -171,7 +171,7 @@
  update_dashboard() {
  	local version old_version index source_dir=""
  	local backup_dir="${DASHBOARD_DIR}.old.$$"
-@@ -223,8 +233,16 @@
+@@ -223,8 +233,29 @@
  trap 'exit 130' INT
  trap 'exit 143' TERM
  

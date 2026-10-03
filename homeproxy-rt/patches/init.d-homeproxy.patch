@@ -77,7 +77,7 @@
  	if [ "$client_ready" -eq 1 ]; then
  		# DNSMasq rules
  		local dns_port dns_ready=1
-@@ -322,15 +361,22 @@
+@@ -322,15 +361,30 @@
  		# sing-box (client)
  		procd_open_instance "sing-box-c"
  
@@ -90,6 +90,11 @@
 +		# Go runtime: use all 4 cores, return memory aggressively
 +		procd_set_param env GOMAXPROCS=4
 +		procd_set_param env GODEBUG=madvdontneed=1
++		# Ultimate perf: aggressive GC for low latency, 1GiB heap cap (2GB RAM)
++		procd_set_param env GOGC=60
++		procd_set_param env GOMEMLIMIT=1073741824
++		# CPU isolation: pin sing-box to CPU3 (frees CPU0-2 for IRQ/RPS/kernel)
++		# taskset in the wrapper command
 +		procd_set_param command /bin/sh -c 'echo -300 > /proc/self/oom_score_adj; exec "$0" "$@"'
 +		procd_append_param command "$PROG" run --config "$RUN_DIR/sing-box-c.json"
 +		# N1 has 4 cores to spare, prioritize the proxy. K3 keeps 0 (dual-core

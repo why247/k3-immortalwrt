@@ -37,4 +37,12 @@ uci -q commit firewall
 # --- 6. Go 运行时 ---
 # HomeProxy 启动脚本已加 GODEBUG=madvdontneed=1
 
+# --- 内存优化：dnsmasq 缓存降到 2048 (省内存) ---
+uci -q set dhcp.@dnsmasq[0].cachesize='2048'
+uci -q commit dhcp
+
+# --- 关无用服务 (省内存/CPU) ---
+/etc/init.d/odhcpd disable 2>/dev/null
+/etc/init.d/ppp disable 2>/dev/null
+
 exit 0

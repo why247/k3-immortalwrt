@@ -87,6 +87,9 @@
 +		# the OOM killer. -300 (not -1000, which would never be killed and
 +		# could hang the system). Wrapper via /bin/sh -c, exec preserves it
 +		# across respawns. (procd has no native oom_score_adj support)
++		# Go runtime: use all 4 cores, return memory aggressively
++		procd_set_param env GOMAXPROCS=4
++		procd_set_param env GODEBUG=madvdontneed=1
 +		procd_set_param command /bin/sh -c 'echo -300 > /proc/self/oom_score_adj; exec "$0" "$@"'
 +		procd_append_param command "$PROG" run --config "$RUN_DIR/sing-box-c.json"
 +		# N1 has 4 cores to spare, prioritize the proxy. K3 keeps 0 (dual-core

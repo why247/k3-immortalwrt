@@ -1,0 +1,13 @@
+--- a/root/etc/homeproxy/scripts/homeproxy.uc
++++ b/root/etc/homeproxy/scripts/homeproxy.uc
+@@ -499,6 +499,10 @@
+ 		outbound.stream_receive_window = !isEmpty(node.hysteria_stream_receive_window) ? `${node.hysteria_stream_receive_window} B` : null;
+ 		outbound.connection_receive_window = !isEmpty(node.hysteria_connection_receive_window) ? `${node.hysteria_connection_receive_window} B` : null;
+ 		outbound.disable_path_mtu_discovery = strToBool(node.hysteria_disable_path_mtu_discovery);
++		/* K3 double-NAT: keep QUIC alive through two layers of NAT.
++		 * QUIC connection ID survives NAT rebinding, but keepalive prevents
++		 * idle timeout in the upstream (N1) conntrack table. */
++		outbound.keep_alive_period = (node.type === 'hysteria2') ? '20s' : null;
+ 		outbound.disable_chrome_parrot = (node.type === 'hysteria2') ? strToBool(node.hysteria_disable_chrome_parrot) : null;
+ 		outbound.obfs = (node.type === 'hysteria2' && node.hysteria_obfs_type) ? {
+ 			type: node.hysteria_obfs_type,

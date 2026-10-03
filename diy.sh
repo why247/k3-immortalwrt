@@ -11,6 +11,10 @@ cp -r /tmp/viking-packages/luci-app-homeproxy package/luci-app-homeproxy
 cp -r /tmp/viking-packages/sing-box package/sing-box
 rm -rf /tmp/viking-packages
 
+# K3 (BCM4709/Cortex-A9) 无 VFP/NEON, Go 必须软浮点编译, 否则 illegal instruction
+# 在 sing-box Makefile 开头强制 GOARM=5
+sed -i '1i GOARM:=5' package/sing-box/Makefile
+
 # HomeProxy 补丁集：redirect/tproxy 改造 + 防火墙去重 + 原子回滚
 HP_RT="$GITHUB_WORKSPACE/homeproxy-rt"
 if [ -d "$HP_RT" ]; then

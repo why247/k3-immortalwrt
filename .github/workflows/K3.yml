@@ -1,0 +1,100 @@
+name: Build ImmortalWrt for K3
+
+on:
+  workflow_dispatch:
+    inputs:
+      ssh:
+        description: 'SSH connection to Actions'
+        required: true
+        default: 'false'
+        type: choice
+        options:
+          - true
+          - false
+
+env:
+  REPO_URL: https://github.com/VIKINGYFY/immortalwrt
+  REPO_REF: owrt
+  TZ: Asia/Shanghai
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+
+    steps:
+    - name: 检查Actions
+      uses: actions/checkout@main
+
+    - name: 释放空间
+      uses: jlumbroso/free-disk-space@main
+      with:
+        tool-cache: true
+        android: true
+        dotnet: true
+        haskell: true
+        large-packages: true
+        docker-images: true
+        swap-storage: true
+
+    - name: 初始化编译环境
+      env:
+        DEBIAN_FRONTEND: noninteractive
+      run: |
+        curl -s https://build-scripts.immortalwrt.org/init_build_environment.sh | sudo bash > /dev/null
+        sudo timedatectl set-timezone "$TZ"
+        sudo mkdir -p /workdir
+        sudo chown $USER:$GROUPS /workdir
+
+    - name: 克隆源码
+      working-directory: /workdir
+      run: |
+        git clone $REPO_URL -b $REPO_REF --single-branch --depth=1 openwrt
+        ln -sf /workdir/openwrt $GITHUB_WORKSPACE/openwrt
+
+    - name: 自定义配置与 feeds
+      working-directory: ./openwrt
+      run: |
+        chmod +x $GITHUB_WORKSPACE/diy.sh
+        $GITHUB_WORKSPACE/diy.sh
+        rm -rf ./files ./.config
+        mv "$GITHUB_WORKSPACE/files" ./files
+        mv "$GITHUB_WORKSPACE/.config" ./.config
+
+    - name: SSH连接到Actions
+      uses: P3TERX/ssh2actions@main
+      if: github.event.inputs.ssh == 'true'
+
+    - name: 下载软件包
+      working-directory: ./openwrt
+      run: |
+        make defconfig
+        make download -j$(( $(nproc) * 2 ))
+        find dl -size -1k -exec ls -l {} \;
+        find dl -size -1k -exec rm -f {} \;
+
+    - name: 编译K3固件
+      run: |
+        cd openwrt
+        echo -e "可使用的核心数：$(nproc)"
+        make -j$(nproc) || make -j$(($(nproc) / 2)) || make -j1 V=s
+
+    - name: 发布固件
+      uses: softprops/action-gh-release@master
+      with:
+        tag_name: K3_ImmortalWrt_${{ env.PACKAGED_OUTPUTDATE }}
+        files: openwrt/bin/targets/bcm53xx/generic/*.bin
+        body: |
+          斐讯 K3 专用固件
+          * 基本信息
+          NAT 二级路由模式，WAN 口 DHCP（接上级路由 LAN）
+          默认网关：192.168.1.1，LAN 侧开启 DHCP
+          WiFi: 双频同名 'jy'（密码首次启动后请修改）
+          账户: root
+          密码: password
+
+    - name: 删除运行记录
+      uses: Mattraks/delete-workflow-runs@main
+      with:
+        retain_days: 3
+        keep_minimum_runs: 4
+        token: ${{ secrets.GITHUB_TOKEN }}

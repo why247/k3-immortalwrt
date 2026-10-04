@@ -23,8 +23,6 @@ cp -r /tmp/viking-packages/sing-box package/sing-box
 rm -rf /tmp/viking-packages
 
 # K3 (BCM4709/Cortex-A9) 无 VFP/NEON, Go 必须软浮点编译, 否则 illegal instruction
-# OpenWrt golang-package.mk 用 GO_ARM (带下划线) 做 Makefile 变量, 传给 Go 时才叫 GOARM
-# 在 sing-box Makefile 开头强制 GO_ARM=5
 if [ -f package/sing-box/Makefile ]; then
 	sed -i '1i GO_ARM:=5' package/sing-box/Makefile
 	echo "GO_ARM=5 forced for sing-box"
@@ -32,19 +30,15 @@ else
 	echo "WARNING: package/sing-box/Makefile not found, skipping GO_ARM fix" >&2
 fi
 
-# HomeProxy 补丁集：redirect/tproxy 改造 + 防火墙去重 + 原子回滚
+# HomeProxy 补丁集
 HP_RT="$GITHUB_WORKSPACE/homeproxy-rt"
 if [ -d "$HP_RT" ]; then
   echo "Applying HomeProxy patch set from $HP_RT ..."
-  echo "Patches found:"
-  ls -1 "$HP_RT/patches/"*.patch 2>/dev/null || echo "  (no .patch files found!)"
   sh "$HP_RT/apply-patches.sh" package/luci-app-homeproxy || {
-    echo "ERROR: apply-patches.sh failed with exit code $?" >&2
+    echo "ERROR: apply-patches.sh failed" >&2
     exit 1
   }
-  echo "HomeProxy patches applied successfully"
-  # Pre-seed fresh cn_ip.list at build time (150K, baked into firmware).
-  # Falls back to the bundled copy if download fails.
+  echo "HomeProxy patches applied"
   CN_IP_DIR="package/luci-app-homeproxy/root/etc/homeproxy/resources"
   mkdir -p "$CN_IP_DIR"
   if curl -fsSL --retry 3 --max-time 60 \
@@ -53,30 +47,25 @@ if [ -d "$HP_RT" ]; then
     if [ "$(wc -l < "$CN_IP_DIR/cn_ip.list.tmp")" -ge 8000 ]; then
       mv "$CN_IP_DIR/cn_ip.list.tmp" "$CN_IP_DIR/cn_ip.list"
       date -u +%Y-%m-%d > "$CN_IP_DIR/cn_ip.ver"
-      echo "Pre-seeded fresh cn_ip.list ($(wc -l < "$CN_IP_DIR/cn_ip.list") lines)"
+      echo "Pre-seeded cn_ip.list"
     else
-      echo "WARNING: downloaded cn_ip.list too small, keeping bundled copy" >&2
       rm -f "$CN_IP_DIR/cn_ip.list.tmp"
     fi
   else
-    echo "WARNING: cn_ip.list download failed, keeping bundled copy" >&2
     rm -f "$CN_IP_DIR/cn_ip.list.tmp"
   fi
 else
-  echo "WARNING: homeproxy-rt patch set not found at $HP_RT, building unpatched HomeProxy" >&2
+  echo "WARNING: homeproxy-rt not found" >&2
 fi
 
 # 安装 feeds
 ./scripts/feeds install -a
 
-# K3 专用：从构建目标中彻底移除 D-Link 设备
-# 原因：.config 禁用 D-Link 后，构建系统仍尝试编译它们（Device/BuildSelected 过滤失效），
-# 导致缺失 dlink_dir-890l-u-boot.bin 而失败。直接从 TARGET_DEVICES 移除，一劳永逸。
+# K3 专用：移除所有 D-Link 设备（共3个）
 BCM53XX_MK="target/linux/bcm53xx/image/Makefile"
 if [ -f "$BCM53XX_MK" ]; then
   sed -i 's/^TARGET_DEVICES += dlink_dir-890l/# TARGET_DEVICES += dlink_dir-890l/' "$BCM53XX_MK"
   sed -i 's/^TARGET_DEVICES += dlink_dir-885l/# TARGET_DEVICES += dlink_dir-885l/' "$BCM53XX_MK"
-  echo "D-Link devices removed from bcm53xx TARGET_DEVICES"
-else
-  echo "WARNING: $BCM53XX_MK not found, skipping D-Link removal" >&2
+  sed -i 's/^TARGET_DEVICES += dlink_dwl-8610ap/# TARGET_DEVICES += dlink_dwl-8610ap/' "$BCM53XX_MK"
+  echo "D-Link devices removed"
 fi

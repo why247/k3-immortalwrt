@@ -24,6 +24,9 @@ rm -rf /tmp/viking-packages
 
 # K3 (BCM4709/Cortex-A9) 无 VFP/NEON, Go 必须软浮点编译, 否则 illegal instruction
 if [ -f package/sing-box/Makefile ]; then
+	# 注意：上游 golang-values.mk 会用 GO_ARM:=7 覆盖此值（immediate assignment）
+	# 如果构建出的 sing-box 在 K3 上仍报 illegal instruction，需检查 CI 日志中 go build 的 GOARM 实际值
+	# 备选方案：patch feeds/packages/lang/golang/golang-values.mk
 	sed -i '1i GO_ARM:=5' package/sing-box/Makefile
 	echo "GO_ARM=5 forced for sing-box"
 else
@@ -79,7 +82,7 @@ set wireless.radio0=wifi-device
 set wireless.radio0.type='mac80211'
 set wireless.radio0.channel='auto'
 set wireless.radio0.band='2g'
-set wireless.radio0.htmode='HE20'
+set wireless.radio0.htmode='HT20'
 set wireless.radio0.country='CN'
 set wireless.radio0.disabled='0'
 set wireless.radio1=wifi-device

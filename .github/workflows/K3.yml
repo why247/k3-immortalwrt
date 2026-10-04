@@ -68,8 +68,10 @@ jobs:
       working-directory: ./openwrt
       run: |
         make defconfig
-        ./scripts/config --disable CONFIG_TARGET_bcm53xx_DEVICE_dlink_dir-890l
-        ./scripts/config --disable CONFIG_TARGET_bcm53xx_DEVICE_dlink_dir-885l
+        sed -i 's/^CONFIG_TARGET_bcm53xx_DEVICE_dlink_dir-890l=y/# CONFIG_TARGET_bcm53xx_DEVICE_dlink_dir-890l is not set/' .config
+        sed -i 's/^CONFIG_TARGET_bcm53xx_DEVICE_dlink_dir-885l=y/# CONFIG_TARGET_bcm53xx_DEVICE_dlink_dir-885l is not set/' .config
+        grep -q "dlink_dir-890l is not set" .config || echo "# CONFIG_TARGET_bcm53xx_DEVICE_dlink_dir-890l is not set" >> .config
+        grep -q "dlink_dir-885l is not set" .config || echo "# CONFIG_TARGET_bcm53xx_DEVICE_dlink_dir-885l is not set" >> .config
         make download -j$(( $(nproc) * 2 ))
         find dl -size -1k -exec ls -l {} \;
         find dl -size -1k -exec rm -f {} \;

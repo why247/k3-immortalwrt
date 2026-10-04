@@ -32,6 +32,15 @@ if [ -f package/sing-box/Makefile ]; then
 else
 	echo "WARNING: package/sing-box/Makefile not found, skipping GO_ARM fix" >&2
 fi
+# sing-box 精简构建（K3 闪存只有 26MB）
+# 只保留 Hysteria2 所需的 with_quic，另含 uTLS 和 Clash API
+# 去掉 gVisor/TUN、WireGuard 等 K3 用不上的模块
+if [ -f package/sing-box/Makefile ]; then
+	sed -i 's/^GO_BUILD_TAGS:=.*/GO_BUILD_TAGS:=with_quic,with_utls,with_clash_api/' package/sing-box/Makefile || \
+	echo "GO_BUILD_TAGS:=with_quic,with_utls,with_clash_api" >> package/sing-box/Makefile
+	echo "sing-box minimal build tags set"
+fi
+
 
 # HomeProxy 补丁集
 HP_RT="$GITHUB_WORKSPACE/homeproxy-rt"

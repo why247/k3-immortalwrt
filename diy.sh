@@ -48,7 +48,7 @@ if [ -d "$HP_RT" ]; then
   CN_IP_DIR="package/luci-app-homeproxy/root/etc/homeproxy/resources"
   mkdir -p "$CN_IP_DIR"
   if curl -fsSL --retry 3 --max-time 60 \
-      "https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@meta/geo/geoip/cn.list" \
+      "https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@meta/geo/geoip/cn.list" \
       -o "$CN_IP_DIR/cn_ip.list.tmp"; then
     if [ "$(wc -l < "$CN_IP_DIR/cn_ip.list.tmp")" -ge 8000 ]; then
       mv "$CN_IP_DIR/cn_ip.list.tmp" "$CN_IP_DIR/cn_ip.list"

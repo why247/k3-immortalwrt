@@ -24,7 +24,7 @@
 +	for i in 1 2 3 4 5 6; do
 +		if [ ! -s /etc/homeproxy/resources/cn_ip.list ]; then
 +			curl -fsSL --connect-timeout 10 --retry 2 \
-+				"https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@meta/geo/geoip/cn.list" \
++				"https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@meta/geo/geoip/cn.list" \
 +				-o /etc/homeproxy/resources/cn_ip.list.tmp 2>/dev/null && \
 +			[ $(wc -l < /etc/homeproxy/resources/cn_ip.list.tmp 2>/dev/null) -gt 8000 ] && \
 +			mv /etc/homeproxy/resources/cn_ip.list.tmp /etc/homeproxy/resources/cn_ip.list && \

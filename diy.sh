@@ -69,4 +69,27 @@ if [ -f "$BCM53XX_MK" ]; then
   sed -i 's/^TARGET_DEVICES += dlink_dwl-8610ap/# TARGET_DEVICES += dlink_dwl-8610ap/' "$BCM53XX_MK"
   echo "D-Link devices removed"
 fi
-# TEST FIX
+
+# --- K3 无线 + LAN (2026-10-04) ---
+mkdir -p files/etc/uci-defaults
+cat > files/etc/uci-defaults/99-k3-wireless <<'EOF'
+#!/bin/sh
+uci -q batch <<'EOU'
+set wireless.radio0=wifi-device
+set wireless.radio0.type='mac80211'
+set wireless.radio0.channel='auto'
+set wireless.radio0.band='2g'
+set wireless.radio0.htmode='HE20'
+set wireless.radio0.country='CN'
+set wireless.radio0.disabled='0'
+set wireless.radio1=wifi-device
+set wireless.radio1.type='mac80211'
+set wireless.radio1.channel='149'
+set wireless.radio1.band='5g'
+set wireless.radio1.htmode='VHT80'
+set wireless.radio1.country='CN'
+set wireless.radio1.disabled='0'
+set wireless.default_radio0=wifi-iface
+set wireless.default_radio0.device='radio0'
+set wireless.default_radio0.mode='ap'
+set

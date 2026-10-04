@@ -1,6 +1,19 @@
 --- a/root/etc/uci-defaults/luci-homeproxy
 +++ b/root/etc/uci-defaults/luci-homeproxy
-@@ -36,7 +36,15 @@
+@@ -19,6 +19,12 @@
+ 	set firewall.homeproxy_input.position="chain-pre"
+ 	set firewall.homeproxy_input.chain="input"
+ 
++	delete firewall.homeproxy_client
++	set firewall.homeproxy_client=include
++	set firewall.homeproxy_client.type=nftables
++	set firewall.homeproxy_client.path="/var/run/homeproxy/fw4_client.nft"
++	set firewall.homeproxy_client.position="table-post"
++
+ 	delete firewall.homeproxy_post
+ 	commit firewall
+ EOF
+@@ -30,7 +36,32 @@
  rm -rf /tmp/luci-*
  rm -f /etc/homeproxy/dashboard/.etag
  [ ! -d /etc/homeproxy/dashboard ] || chmod -R a+rX /etc/homeproxy/dashboard
@@ -13,9 +26,26 @@
 +# a LuCI package upgrade has been observed to disrupt ubus/LuCI.
 +# Re-running firewall_pre.uc + fw4 reload is sufficient for firewall
 +# changes and does not touch the running proxy.
++#
++# The regenerated include is validated with nft --check before reloading:
++# a broken include aborts the entire fw4 reload and would leave the
++# firewall (and the transparent proxy) down. On failure the previous
++# working include is restored (mirrors update_resources.sh logic).
 +if [ -f /var/run/homeproxy/sing-box-c.json ]; then
-+	ucode /etc/homeproxy/scripts/firewall_pre.uc >/dev/null 2>&1 && \
-+		fw4 reload >/dev/null 2>&1 || \
++	client_nft=/var/run/homeproxy/fw4_client.nft
++	[ -f "$client_nft" ] && cp -f "$client_nft" "$client_nft.upgrade-bak"
++	if ucode /etc/homeproxy/scripts/firewall_pre.uc >/dev/null 2>&1 &&
++	   fw4 print 2>/dev/null | nft --check -f - >/dev/null 2>&1 &&
++	   fw4 reload >/dev/null 2>&1; then
++		rm -f "$client_nft.upgrade-bak"
++	else
 +		printf '%s\n' 'HomeProxy: failed to refresh firewall rules after upgrade.' >&2
++		if [ -f "$client_nft.upgrade-bak" ]; then
++			cp -f "$client_nft.upgrade-bak" "$client_nft"
++			fw4 reload >/dev/null 2>&1 || \
++				printf '%s\n' 'HomeProxy: CRITICAL: failed to restore firewall rules after upgrade.' >&2
++			rm -f "$client_nft.upgrade-bak"
++		fi
++	fi
 +fi
  exit 0

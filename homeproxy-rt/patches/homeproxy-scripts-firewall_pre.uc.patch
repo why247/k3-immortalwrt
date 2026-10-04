@@ -12,7 +12,7 @@
  
  const cfgname = 'homeproxy';
  const uci = cursor();
-@@ -24,3 +24,155 @@
+@@ -24,3 +24,240 @@
  
  if (writefile(input_file, length(input) ? join('\n', input) + '\n' : '') === null)
  	exit(1);
@@ -45,6 +45,88 @@
 +const ipv6_support = uci.get(cfgname, 'config', 'ipv6_support') || '0';
 +const listen_interfaces = normalizeList(uci.get(cfgname, 'control', 'listen_interfaces'));
 +
++function normalize_ipv6(addr) {
++	/* Lowercase and expand :: to full 8-group form, stripping leading
++	 * zeros, so that textual variants of the same address compare equal.
++	 * Returns null if unparsable. */
++	addr = lc(addr);
++	if (match(addr, /\./))
++		return addr; /* v4-mapped / v4-compatible: only case-normalized */
++	let parts = split(addr, '::');
++	let groups = [];
++	if (length(parts) == 1) {
++		groups = split(parts[0], ':');
++	} else if (length(parts) == 2) {
++		let left = parts[0] == '' ? [] : split(parts[0], ':');
++		let right = parts[1] == '' ? [] : split(parts[1], ':');
++		let missing = 8 - length(left) - length(right);
++		if (missing < 0)
++			return null;
++		groups = left;
++		for (let i = 0; i < missing; i++)
++			push(groups, '0');
++		for (let g in right)
++			push(groups, g);
++	} else {
++		return null; /* multiple :: */
++	}
++	if (length(groups) != 8)
++		return null;
++	let norm = [];
++	for (let g in groups) {
++		if (!match(g, /^[0-9a-f]{1,4}$/))
++			return null;
++		while (length(g) > 1 && substr(g, 0, 1) == '0')
++			g = substr(g, 1);
++		push(norm, g);
++	}
++	return join(':', norm);
++}
++
++function normalize_cidr(line) {
++	/* Canonicalize a CIDR string so textual variants of the same network
++	 * dedup to one entry. IPv4: host bits are masked off
++	 * (1.1.1.1/24 -> 1.1.1.0/24). IPv6: lowercased and :: expanded.
++	 * Returns the canonical "addr/plen" string, or null if invalid
++	 * (bad format or prefix length out of range). */
++	let parts = split(line, '/');
++	if (length(parts) != 2)
++		return null;
++	if (parts[1] == '' || match(parts[1], /[^0-9]/))
++		return null;
++	let addr = parts[0], plen = int(parts[1]);
++	if (match(addr, /:/)) {
++		if (plen < 0 || plen > 128)
++			return null;
++		let norm = normalize_ipv6(addr);
++		if (norm == null)
++			return null;
++		return `${norm}/${plen}`;
++	}
++	if (plen < 0 || plen > 32)
++		return null;
++	let octets = split(addr, '.');
++	if (length(octets) != 4)
++		return null;
++	let ip = 0;
++	for (let o in octets) {
++		if (match(o, /[^0-9]/) || o == '')
++			return null;
++		let v = int(o);
++		if (v < 0 || v > 255)
++			return null;
++		ip = ((ip << 8) | v) & 0xFFFFFFFF;
++	}
++	let mask = plen == 0 ? 0 : ((0xFFFFFFFF << (32 - plen)) & 0xFFFFFFFF);
++	ip = (ip & mask) & 0xFFFFFFFF;
++	/* >> is sign-propagating; & 0xFF recovers the unsigned octet */
++	let b0 = (ip >> 24) & 0xFF;
++	let b1 = (ip >> 16) & 0xFF;
++	let b2 = (ip >> 8) & 0xFF;
++	let b3 = ip & 0xFF;
++	return `${b0}.${b1}.${b2}.${b3}/${plen}`;
++}
++
 +function load_cidr_file(path) {
 +	const content = readfile(path);
 +	if (content == null)
@@ -55,18 +137,21 @@
 +		line = trim(line);
 +		if (line == '' || substr(line, 0, 1) == '#')
 +			continue;
-+		if (!match(line, /^[0-9a-fA-F:.]+\/[0-9]{1,3}$/)) {
++		/* Normalize first: textual variants of the same network
++		 * (1.1.1.1/24 vs 1.1.1.0/24, 2001:DB8::/32 vs 2001:db8::/32)
++		 * would otherwise both reach the kernel, where nftables
++		 * rejects the duplicate with EEXIST and aborts the entire
++		 * fw4 reload. Note nft --check is a userspace dry-run and
++		 * can NOT catch EEXIST; this dedup is the only defense. */
++		let norm = normalize_cidr(line);
++		if (norm == null) {
 +			warn(`Skipping invalid CIDR entry: ${line}\n`);
 +			continue;
 +		}
-+		/* nftables rejects duplicate set elements with EEXIST, which
-+		 * aborts the entire fw4 reload and leaves the firewall (and the
-+		 * transparent proxy) broken. Upstream lists have shipped
-+		 * duplicates before, so dedup here while preserving order. */
-+		if (seen[line])
++		if (seen[norm])
 +			continue;
-+		seen[line] = 1;
-+		push(result, line);
++		seen[norm] = 1;
++		push(result, norm);
 +	}
 +	return result;
 +}

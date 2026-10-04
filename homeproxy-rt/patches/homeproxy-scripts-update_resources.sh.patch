@@ -95,7 +95,7 @@
  		--retry-delay 1 --connect-timeout 10 --max-time 30 \
  		-A "$USER_AGENT" "$DASHBOARD_VERSION_URL")" || return 1
  	version="$(printf '%s\n' "$feed" | awk -F '[<>]' '
-@@ -104,55 +131,57 @@
+@@ -104,55 +131,66 @@
  	printf '%s\n' "$version"
  }
  
@@ -121,7 +121,17 @@
 +		chmod 0644 "$stage_dir/$resource.$ext" "$stage_dir/$resource.ver" &&
 +		mv -f "$stage_dir/$resource.$ext" "$RESOURCES_DIR/$resource.$ext" || return 1
  	mark_updated "$resource"
- 	mv -f "$stage_dir/$resource.ver" "$RESOURCES_DIR/$resource.ver"
+-	mv -f "$stage_dir/$resource.ver" "$RESOURCES_DIR/$resource.ver"
++	# For cn_ip, defer the .ver commit until AFTER the firewall refresh
++	# succeeds. This closes the kill window where a SIGKILL between install
++	# and firewall refresh would leave new .ver + old firewall, causing the
++	# next run to skip the refresh (hash already matches).
++	if [ "$resource" = "cn_ip" ] && [ "$CN_IP_DEFER_VER" = "1" ]; then
++		DEFERRED_CN_IP_VER="$stage_dir/cn_ip.ver"
++		log "[cn_ip] .ver commit deferred until firewall refresh completes."
++	else
++		mv -f "$stage_dir/$resource.ver" "$RESOURCES_DIR/$resource.ver"
++	fi
  }
  
 -update_rule_set() {
@@ -182,7 +192,7 @@
  update_dashboard() {
  	local version old_version index source_dir=""
  	local backup_dir="${DASHBOARD_DIR}.old.$$"
-@@ -223,8 +252,16 @@
+@@ -223,8 +261,19 @@
  trap 'exit 130' INT
  trap 'exit 143' TERM
  
@@ -194,34 +204,44 @@
 +cn_ip_ver="$RESOURCES_DIR/cn_ip.ver"
 +cn_ip_list_bak="$RESOURCES_DIR/cn_ip.list.bak"
 +cn_ip_ver_bak="$RESOURCES_DIR/cn_ip.ver.bak"
-+[ -f "$cn_ip_list" ] && cp -f "$cn_ip_list" "$cn_ip_list_bak"
-+[ -f "$cn_ip_ver" ] && cp -f "$cn_ip_ver" "$cn_ip_ver_bak"
++[ -f "$cn_ip_list" ] && { cp -f "$cn_ip_list" "$cn_ip_list_bak" || log "[RESOURCES] WARN: failed to backup cn_ip.list (disk full?)"; }
++[ -f "$cn_ip_ver" ] && { cp -f "$cn_ip_ver" "$cn_ip_ver_bak" || log "[RESOURCES] WARN: failed to backup cn_ip.ver (disk full?)"; }
++# Defer cn_ip .ver commit until firewall refresh succeeds (see install_resource).
++CN_IP_DEFER_VER=1
 +update_hashed_resource "cn_ip" "$CN_IP_SOURCE" "list" "validate_cidr_list" || mark_failed "cn_ip"
++CN_IP_DEFER_VER=0
 +update_hashed_resource "geosite_cn" "$GEOSITE_SOURCE" "srs" "validate_rule_set" || mark_failed "geosite_cn"
  update_dashboard || mark_failed "dashboard"
  
  if [ -n "$FAILED_BRANCHES" ]; then
-@@ -241,4 +278,39 @@
+@@ -241,4 +290,48 @@
  	finish 3
  fi
  
 +# Refresh firewall rules if CN IPs were updated (nftables embeds the CIDRs).
-+# The generated include is validated with nft --check before reloading: a
-+# broken include aborts the entire fw4 reload and would leave the firewall
-+# (and the transparent proxy) down, as happened with a duplicate-laden
-+# upstream list. On any failure the previous working include AND the previous
-+# data files are restored, so the daemon never sees a half-applied update
-+# (new .ver on disk but old firewall) and won't trigger a bad service reload.
++# The generated include is syntax-checked with nft --check before reloading.
++# Note: --check is a userspace dry-run and cannot detect kernel-side EEXIST
++# errors from duplicate set elements; duplicates are eliminated earlier by
++# load_cidr_file()'s normalized dedup in firewall_pre.uc. A broken include
++# aborts the entire fw4 reload and would leave the firewall (and the
++# transparent proxy) down, as happened with a duplicate-laden upstream list.
++# On any failure the previous working include AND the previous data files
++# are restored, so the daemon never sees a half-applied update and won't
++# trigger a bad service reload.
 +case "$UPDATED_BRANCHES" in
 +	*cn_ip*)
 +		log "[RESOURCES] cn_ip updated, refreshing firewall rules."
 +		client_nft="$RUN_DIR/fw4_client.nft"
 +		client_nft_bak="$RUN_DIR/fw4_client.nft.bak"
-+		[ -f "$client_nft" ] && cp -f "$client_nft" "$client_nft_bak"
++		[ -f "$client_nft" ] && { cp -f "$client_nft" "$client_nft_bak" || log "[RESOURCES] WARN: failed to backup fw4_client.nft (disk full?)"; }
 +		if ucode "/etc/homeproxy/scripts/firewall_pre.uc" 2>&1 | tee -a "$LOG_PATH" &&
 +		   fw4 print 2>&1 | tee -a "$LOG_PATH" | nft --check -f - 2>&1 | tee -a "$LOG_PATH" &&
 +		   fw4 reload 2>&1 | tee -a "$LOG_PATH"; then
 +			log "[RESOURCES] Firewall reloaded."
++			# Commit the deferred cn_ip .ver now that firewall is in sync.
++			if [ -n "$DEFERRED_CN_IP_VER" ] && [ -f "$DEFERRED_CN_IP_VER" ]; then
++				mv -f "$DEFERRED_CN_IP_VER" "$cn_ip_ver" && log "[RESOURCES] cn_ip version committed."
++			fi
 +			rm -f "$client_nft_bak" "$cn_ip_list_bak" "$cn_ip_ver_bak"
 +		else
 +			log "[RESOURCES] Firewall update failed; restoring previous rules and data."
@@ -233,6 +253,8 @@
 +					log "[RESOURCES] Previous firewall rules restored."
 +				else
 +					log "[RESOURCES] CRITICAL: failed to restore firewall rules."
++					rm -f "$client_nft_bak" "$cn_ip_list_bak" "$cn_ip_ver_bak"
++					finish 2
 +				fi
 +				rm -f "$client_nft_bak" "$cn_ip_list_bak" "$cn_ip_ver_bak"
 +			fi

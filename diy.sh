@@ -68,3 +68,15 @@ fi
 
 # 安装 feeds
 ./scripts/feeds install -a
+
+# K3 专用：从构建目标中彻底移除 D-Link 设备
+# 原因：.config 禁用 D-Link 后，构建系统仍尝试编译它们（Device/BuildSelected 过滤失效），
+# 导致缺失 dlink_dir-890l-u-boot.bin 而失败。直接从 TARGET_DEVICES 移除，一劳永逸。
+BCM53XX_MK="target/linux/bcm53xx/image/Makefile"
+if [ -f "$BCM53XX_MK" ]; then
+  sed -i 's/^TARGET_DEVICES += dlink_dir-890l/# TARGET_DEVICES += dlink_dir-890l/' "$BCM53XX_MK"
+  sed -i 's/^TARGET_DEVICES += dlink_dir-885l/# TARGET_DEVICES += dlink_dir-885l/' "$BCM53XX_MK"
+  echo "D-Link devices removed from bcm53xx TARGET_DEVICES"
+else
+  echo "WARNING: $BCM53XX_MK not found, skipping D-Link removal" >&2
+fi

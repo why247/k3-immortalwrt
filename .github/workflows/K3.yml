@@ -1,104 +1,82 @@
-name: Build ImmortalWrt for K3
+#!/bin/bash
+set -e
 
-on:
-  workflow_dispatch:
-    inputs:
-      ssh:
-        description: 'SSH connection to Actions'
-        required: true
-        default: 'false'
-        type: choice
-        options:
-          - true
-          - false
+# 更新 feeds
+./scripts/feeds update -a
 
-env:
-  REPO_URL: https://github.com/VIKINGYFY/immortalwrt
-  REPO_REF: owrt
-  TZ: Asia/Shanghai
+# HomeProxy：使用 VIKINGYFY/packages 的源码
+rm -rf /tmp/viking-packages package/luci-app-homeproxy package/sing-box
+git clone --depth=1 https://github.com/VIKINGYFY/packages /tmp/viking-packages || {
+	echo "ERROR: Failed to clone VIKINGYFY/packages" >&2
+	exit 1
+}
+[ -d /tmp/viking-packages/luci-app-homeproxy ] || {
+	echo "ERROR: luci-app-homeproxy not found in cloned repo" >&2
+	exit 1
+}
+[ -d /tmp/viking-packages/sing-box ] || {
+	echo "ERROR: sing-box not found in cloned repo" >&2
+	exit 1
+}
+cp -r /tmp/viking-packages/luci-app-homeproxy package/luci-app-homeproxy
+cp -r /tmp/viking-packages/sing-box package/sing-box
+rm -rf /tmp/viking-packages
 
-jobs:
-  build:
-    runs-on: ubuntu-24.04
+# K3 (BCM4709/Cortex-A9) 无 VFP/NEON, Go 必须软浮点编译, 否则 illegal instruction
+# OpenWrt golang-package.mk 用 GO_ARM (带下划线) 做 Makefile 变量, 传给 Go 时才叫 GOARM
+# 在 sing-box Makefile 开头强制 GO_ARM=5
+if [ -f package/sing-box/Makefile ]; then
+	sed -i '1i GO_ARM:=5' package/sing-box/Makefile
+	echo "GO_ARM=5 forced for sing-box"
+else
+	echo "WARNING: package/sing-box/Makefile not found, skipping GO_ARM fix" >&2
+fi
 
-    steps:
-    - name: 检查Actions
-      uses: actions/checkout@main
+# HomeProxy 补丁集：redirect/tproxy 改造 + 防火墙去重 + 原子回滚
+HP_RT="$GITHUB_WORKSPACE/homeproxy-rt"
+if [ -d "$HP_RT" ]; then
+  echo "Applying HomeProxy patch set from $HP_RT ..."
+  echo "Patches found:"
+  ls -1 "$HP_RT/patches/"*.patch 2>/dev/null || echo "  (no .patch files found!)"
+  sh "$HP_RT/apply-patches.sh" package/luci-app-homeproxy || {
+    echo "ERROR: apply-patches.sh failed with exit code $?" >&2
+    exit 1
+  }
+  echo "HomeProxy patches applied successfully"
+  # Pre-seed fresh cn_ip.list at build time (150K, baked into firmware).
+  # Falls back to the bundled copy if download fails.
+  CN_IP_DIR="package/luci-app-homeproxy/root/etc/homeproxy/resources"
+  mkdir -p "$CN_IP_DIR"
+  if curl -fsSL --retry 3 --max-time 60 \
+      "https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@meta/geo/geoip/cn.list" \
+      -o "$CN_IP_DIR/cn_ip.list.tmp"; then
+    if [ "$(wc -l < "$CN_IP_DIR/cn_ip.list.tmp")" -ge 8000 ]; then
+      mv "$CN_IP_DIR/cn_ip.list.tmp" "$CN_IP_DIR/cn_ip.list"
+      date -u +%Y-%m-%d > "$CN_IP_DIR/cn_ip.ver"
+      echo "Pre-seeded fresh cn_ip.list ($(wc -l < "$CN_IP_DIR/cn_ip.list") lines)"
+    else
+      echo "WARNING: downloaded cn_ip.list too small, keeping bundled copy" >&2
+      rm -f "$CN_IP_DIR/cn_ip.list.tmp"
+    fi
+  else
+    echo "WARNING: cn_ip.list download failed, keeping bundled copy" >&2
+    rm -f "$CN_IP_DIR/cn_ip.list.tmp"
+  fi
+else
+  echo "WARNING: homeproxy-rt patch set not found at $HP_RT, building unpatched HomeProxy" >&2
+fi
 
-    - name: 释放空间
-      uses: jlumbroso/free-disk-space@main
-      with:
-        tool-cache: true
-        android: true
-        dotnet: true
-        haskell: true
-        large-packages: true
-        docker-images: true
-        swap-storage: true
+# 安装 feeds
+./scripts/feeds install -a
 
-    - name: 初始化编译环境
-      env:
-        DEBIAN_FRONTEND: noninteractive
-      run: |
-        curl -s https://build-scripts.immortalwrt.org/init_build_environment.sh | sudo bash > /dev/null
-        sudo timedatectl set-timezone "$TZ"
-        sudo mkdir -p /workdir
-        sudo chown $USER:$GROUPS /workdir
-
-    - name: 克隆源码
-      working-directory: /workdir
-      run: |
-        git clone $REPO_URL -b $REPO_REF --single-branch --depth=1 openwrt
-        ln -sf /workdir/openwrt $GITHUB_WORKSPACE/openwrt
-
-    - name: 自定义配置与 feeds
-      working-directory: ./openwrt
-      run: |
-        chmod +x $GITHUB_WORKSPACE/diy.sh
-        $GITHUB_WORKSPACE/diy.sh
-        rm -rf ./files ./.config
-        mv "$GITHUB_WORKSPACE/files" ./files
-        mv "$GITHUB_WORKSPACE/.config" ./.config
-
-    - name: SSH连接到Actions
-      uses: P3TERX/ssh2actions@main
-      if: github.event.inputs.ssh == 'true'
-
-    - name: 下载软件包
-      working-directory: ./openwrt
-      run: |
-        make defconfig
-        sed -i 's/^CONFIG_TARGET_bcm53xx_DEVICE_dlink_dir-890l=y/# CONFIG_TARGET_bcm53xx_DEVICE_dlink_dir-890l is not set/' .config
-        sed -i 's/^CONFIG_TARGET_bcm53xx_DEVICE_dlink_dir-885l=y/# CONFIG_TARGET_bcm53xx_DEVICE_dlink_dir-885l is not set/' .config
-        grep -q "dlink_dir-890l is not set" .config || echo "# CONFIG_TARGET_bcm53xx_DEVICE_dlink_dir-890l is not set" >> .config
-        grep -q "dlink_dir-885l is not set" .config || echo "# CONFIG_TARGET_bcm53xx_DEVICE_dlink_dir-885l is not set" >> .config
-        make download -j$(( $(nproc) * 2 ))
-        find dl -size -1k -exec ls -l {} \;
-        find dl -size -1k -exec rm -f {} \;
-
-    - name: 编译K3固件
-      run: |
-        cd openwrt
-        echo -e "可使用的核心数：$(nproc)"
-        make -j$(nproc) || make -j$(($(nproc) / 2)) || make -j1 V=s
-
-    - name: 发布固件
-      uses: softprops/action-gh-release@master
-      with:
-        tag_name: K3_ImmortalWrt_${{ env.PACKAGED_OUTPUTDATE }}
-        files: openwrt/bin/targets/bcm53xx/generic/*.bin
-        body: |
-          斐讯 K3 专用固件
-          * 基本信息
-          NAT 二级路由模式，WAN 口 DHCP（接上级路由 LAN）
-          默认网关：192.168.1.1，LAN 侧开启 DHCP
-          WiFi: 双频同名 'jy'（密码首次启动后请修改）
-          账户: root
-          密码: password
-
-    - name: 删除运行记录
-      uses: Mattraks/delete-workflow-runs@main
-      with:
-        retain_days: 3
-        keep_minimum_runs: 4
-        token: ${{ secrets.GITHUB_TOKEN }}
+# K3 专用：从构建目标中彻底移除 D-Link 设备
+# 原因：.config 禁用 D-Link 后，构建系统仍尝试编译它们（Device/BuildSelected 过滤失效），
+# 导致缺失 dlink_dir-890l-u-boot.bin 而失败。直接从 TARGET_DEVICES 移除，一劳永逸。
+BCM53XX_MK="target/linux/bcm53xx/image/Makefile"
+if [ -f "$BCM53XX_MK" ]; then
+  sed -i 's/^TARGET_DEVICES += dlink_dir-890l/# TARGET_DEVICES += dlink_dir-890l/' "$BCM53XX_MK"
+  sed -i 's/^TARGET_DEVICES += dlink_dir-885l/# TARGET_DEVICES += dlink_dir-885l/' "$BCM53XX_MK"
+  echo "D-Link devices removed from bcm53xx TARGET_DEVICES"
+else
+  echo "WARNING: $BCM53XX_MK not found, skipping D-Link removal" >&2
+fi

@@ -24,11 +24,11 @@ rm -rf /tmp/viking-packages
 
 # K3 (BCM4709/Cortex-A9) 无 VFP/NEON, Go 必须软浮点编译, 否则 illegal instruction
 if [ -f package/sing-box/Makefile ]; then
-	# 注意：上游 golang-values.mk 会用 GO_ARM:=7 覆盖此值（immediate assignment）
-	# 如果构建出的 sing-box 在 K3 上仍报 illegal instruction，需检查 CI 日志中 go build 的 GOARM 实际值
-	# 备选方案：patch feeds/packages/lang/golang/golang-values.mk
-	sed -i '1i GO_ARM:=5' package/sing-box/Makefile
-	echo "GO_ARM=5 forced for sing-box"
+	# 原理：golang-values.mk 用 GO_ARM:=7 (immediate) 按 CONFIG_CPU_TYPE 的 FPU 推导，
+	# 经 golang-package.mk 在 sing-box Makefile 中被 include，会覆盖之前的值。
+	# 必须把 GO_ARM:=5 放在 include 之后（last-wins），放在第 1 行无效。
+	sed -i '/golang-package\.mk/a GO_ARM:=5' package/sing-box/Makefile
+	echo "GO_ARM=5 forced for sing-box (after golang-package.mk include)"
 else
 	echo "WARNING: package/sing-box/Makefile not found, skipping GO_ARM fix" >&2
 fi

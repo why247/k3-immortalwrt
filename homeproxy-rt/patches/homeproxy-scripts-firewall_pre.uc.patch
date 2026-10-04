@@ -12,7 +12,7 @@
  
  const cfgname = 'homeproxy';
  const uci = cursor();
-@@ -24,3 +24,165 @@
+@@ -24,3 +24,155 @@
  
  if (writefile(input_file, length(input) ? join('\n', input) + '\n' : '') === null)
  	exit(1);
@@ -99,9 +99,7 @@
 +}
 +
 +function nft_set(name, type, cidrs) {
-+	let decl = `set ${name} {\n\ttype ${type}\n\tflags interval,auto-merge\n`;
-+	/* auto-merge: collapse adjacent CIDRs (e.g. two /24 -> one /23),
-+	 * fewer rbtree nodes, faster lookups. Zero risk, pure frontend opt. */
++	let decl = `set ${name} {\n\ttype ${type}\n\tflags interval\n`;
 +	if (length(cidrs))
 +		decl += `\telements = { ${join(', ', cidrs)} }\n`;
 +	decl += '}\n';
@@ -145,10 +143,7 @@
 +push(nft, nft_set('hp_local4', 'ipv4_addr',
 +	['127.0.0.0/8', '10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16', '169.254.0.0/16', '224.0.0.0/4', '255.255.255.255/32']));
 +push(nft, nft_set('hp_local6', 'ipv6_addr',
-+	['::1/128', 'fd00::/8', 'fe80::/10', 'ff00::/8']));
-+/* NOTE: fc00::/7 replaced by fd00::/8 to avoid swallowing sing-box Fake-IP
-+ * v6 range fc00::/18. Real ULA home networks use fd00::/8; fc00::/8 (excl.
-+ * fakeip) is practically unused. */
++	['::1/128', 'fc00::/7', 'fe80::/10', 'ff00::/8']));
 +
 +/* TCP: LAN clients and router-local traffic via nftables redirect. */
 +push(nft, nft_chain('hp_redirect_pre',
@@ -160,11 +155,6 @@
 +
 +/* UDP: LAN clients via TPROXY; router-local traffic is marked here and
 + * picked up by the fwmark policy route (see init.d) into the TPROXY socket. */
-+/* DIVERT: fast path for established UDP flows. Matches packets already
-+ * bound to the transparent TPROXY socket, skips all bypass rules and the
-+ * 12k CIDR lookups. Standard XTLS/mihomo technique. Needs kmod-nft-socket. */
-+push(nft, 'chain hp_divert_pre {\n\ttype filter hook prerouting priority mangle - 5; policy accept;\n' +
-+	`\tsocket transparent 1 meta mark set ${tproxy_mark} counter accept\n};`);
 +push(nft, nft_chain('hp_tproxy_pre',
 +	'type filter hook prerouting priority mangle', true,
 +	`meta l4proto udp tproxy to :${tproxy_port}`));

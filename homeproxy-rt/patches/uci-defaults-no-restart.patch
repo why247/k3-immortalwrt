@@ -1,0 +1,21 @@
+--- a/root/etc/uci-defaults/luci-homeproxy
++++ b/root/etc/uci-defaults/luci-homeproxy
+@@ -36,7 +36,15 @@
+ rm -rf /tmp/luci-*
+ rm -f /etc/homeproxy/dashboard/.etag
+ [ ! -d /etc/homeproxy/dashboard ] || chmod -R a+rX /etc/homeproxy/dashboard
+-[ ! -f /var/run/homeproxy/sing-box-c.json ] || \
+-	/etc/init.d/homeproxy restart >/dev/null 2>&1 || \
+-	printf '%s\n' 'HomeProxy: failed to restart the running service after upgrade.' >&2
++# Regenerate firewall rules on upgrade so new bypass logic (e.g. DHCP
++# UDP 67/68 and DHCPv6 UDP 546/547) takes effect immediately. This
++# intentionally does NOT restart sing-box: a full service restart during
++# a LuCI package upgrade has been observed to disrupt ubus/LuCI.
++# Re-running firewall_pre.uc + fw4 reload is sufficient for firewall
++# changes and does not touch the running proxy.
++if [ -f /var/run/homeproxy/sing-box-c.json ]; then
++	ucode /etc/homeproxy/scripts/firewall_pre.uc >/dev/null 2>&1 && \
++		fw4 reload >/dev/null 2>&1 || \
++		printf '%s\n' 'HomeProxy: failed to refresh firewall rules after upgrade.' >&2
++fi
+ exit 0

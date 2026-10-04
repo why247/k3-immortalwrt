@@ -1,0 +1,17 @@
+--- a/root/etc/config/homeproxy
++++ b/root/etc/config/homeproxy
+@@ -39,12 +39,12 @@
+ 	option advertise_exit_node '0'
+ 
+ config homeproxy 'subscription'
+-	option auto_update '0'
++	option auto_update '1'
+ 	option allow_insecure '0'
+ 	option packet_encoding 'xudp'
+ 	option user_agent 'homeproxy'
+ 	option update_via_proxy '0'
+-	option auto_update_time '0 */6 * * *'
++	option auto_update_time '0 4 * * *'
+ 	option filter_nodes 'disabled'
+ 
+ config homeproxy 'server'

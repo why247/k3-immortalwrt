@@ -168,29 +168,10 @@
  		});
  	}
  }
-@@ -606,19 +612,40 @@
+@@ -606,19 +612,21 @@
  	set_system_proxy: false
  });
  
-+/* Persistent cache: survives sing-box restarts. store_fakeip fixes
-+ * "missing fakeip record" after restart (client-held fake IPs become
-+ * orphans); store_dns avoids re-DoH on restart. Path must be on
-+ * persistent storage, NOT /var/run (tmpfs). 1.14/1.15 compatible:
-+ * no buffer_size/flush_interval (1.15+ only), no store_rdrc (deprecated). */
-+config.experimental = {
-+	cache_file: {
-+		enabled: true,
-+		path: '/tmp/sing-box-cache.db',
-+		store_fakeip: true,
-+		store_dns: true
-+	}
-+};
-+
-+/* DNS performance: larger cache + optimistic stale-while-revalidate.
-+ * 1.14 compatible. cache_capacity <1024 is ignored by sing-box. */
-+config.dns.cache_capacity = 2048;
-+config.dns.optimistic = { enabled: true };
-+
 +/* Transparent proxy inbounds: TCP via nftables redirect, UDP via TPROXY.
 + * Mainland IP bypass happens in nftables before traffic reaches these. */
  push(config.inbounds, {

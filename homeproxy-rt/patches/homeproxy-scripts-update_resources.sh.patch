@@ -73,7 +73,7 @@
  		--retry-delay 1 --connect-timeout 10 --max-time 30 \
  		-A "$USER_AGENT" "$DASHBOARD_VERSION_URL")" || return 1
  	version="$(printf '%s\n' "$feed" | awk -F '[<>]' '
-@@ -104,55 +112,68 @@
+@@ -104,55 +112,57 @@
  	printf '%s\n' "$version"
  }
  
@@ -127,17 +127,6 @@
 +		log "[$resource] Update failed: downloaded file did not pass validation."
  		return 1
  	fi
-+# P1-2: Reject truncated downloads. A half-downloaded file with valid CIDR
-+# lines would pass validate_cidr_list, get its hash written to .ver, and
-+# poison future runs ("Already up to date" forever). cn_ip.list normally
-+# has 9000+ lines.
-+	if [ "$resource" = "cn_ip" ]; then
-+		lines=$(grep -cE '^[0-9a-fA-F:.]+/[0-9]{1,3}[[:space:]]*$' "$TMP_DIR/$resource.$ext")
-+		if [ "$lines" -lt 8000 ]; then
-+			log "[$resource] Update failed: suspiciously few entries ($lines), likely truncated download."
-+			return 1
-+		fi
-+	fi
 -	if ! validate_rule_set "$TMP_DIR/$resource.srs"; then
 -		log "[$resource] Update failed: invalid binary rule set."
 +	new_hash="$(file_hash "$TMP_DIR/$resource.$ext")"
@@ -171,19 +160,10 @@
  update_dashboard() {
  	local version old_version index source_dir=""
  	local backup_dir="${DASHBOARD_DIR}.old.$$"
-@@ -223,8 +233,29 @@
+@@ -223,8 +233,16 @@
  trap 'exit 130' INT
  trap 'exit 143' TERM
  
-+# P1-1: Prevent concurrent runs (cron every 5min + slow download = overlap).
-+# flock(1) is a dependency; use non-blocking lock.
-+LOCK_FILE="$RUN_DIR/update_resources.lock"
-+exec 9>"$LOCK_FILE"
-+if ! flock -n 9; then
-+	log "[RESOURCES] Another update is running; skipping."
-+	exit 0
-+fi
-+
 -update_rule_set "geoip_cn" "$GEOIP_SOURCE" "$GEOIP_VERSION_URL" || mark_failed "geoip_cn"
 -update_rule_set "geosite_cn" "$GEOSITE_SOURCE" "$GEOSITE_VERSION_URL" || mark_failed "geosite_cn"
 +# Backup current cn_ip data BEFORE attempting update, so a failed
@@ -192,12 +172,8 @@
 +cn_ip_ver="$RESOURCES_DIR/cn_ip.ver"
 +cn_ip_list_bak="$RESOURCES_DIR/cn_ip.list.bak"
 +cn_ip_ver_bak="$RESOURCES_DIR/cn_ip.ver.bak"
-+# P1-3: Verify backup integrity with cmp. If cp fails (disk full), the backup
-+# would be empty/corrupt and rollback would destroy good data. Abort early.
-+[ -f "$cn_ip_list" ] && cp -f "$cn_ip_list" "$cn_ip_list_bak" && \
-+	cmp -s "$cn_ip_list" "$cn_ip_list_bak" || { log "[RESOURCES] CRITICAL: cn_ip.list backup failed, aborting."; exit 1; }
-+[ -f "$cn_ip_ver" ] && cp -f "$cn_ip_ver" "$cn_ip_ver_bak" && \
-+	cmp -s "$cn_ip_ver" "$cn_ip_ver_bak" || { log "[RESOURCES] CRITICAL: cn_ip.ver backup failed, aborting."; exit 1; }
++[ -f "$cn_ip_list" ] && cp -f "$cn_ip_list" "$cn_ip_list_bak"
++[ -f "$cn_ip_ver" ] && cp -f "$cn_ip_ver" "$cn_ip_ver_bak"
 +update_hashed_resource "cn_ip" "$CN_IP_SOURCE" "list" "validate_cidr_list" || mark_failed "cn_ip"
 +update_hashed_resource "geosite_cn" "$GEOSITE_SOURCE" "srs" "validate_rule_set" || mark_failed "geosite_cn"
  update_dashboard || mark_failed "dashboard"

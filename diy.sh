@@ -92,4 +92,24 @@ set wireless.radio1.disabled='0'
 set wireless.default_radio0=wifi-iface
 set wireless.default_radio0.device='radio0'
 set wireless.default_radio0.mode='ap'
-set
+set wireless.default_radio0.ssid='jy'
+set wireless.default_radio0.encryption='none'
+set wireless.default_radio0.network='lan'
+set wireless.default_radio1=wifi-iface
+set wireless.default_radio1.device='radio1'
+set wireless.default_radio1.mode='ap'
+set wireless.default_radio1.ssid='jy'
+set wireless.default_radio1.encryption='none'
+set wireless.default_radio1.network='lan'
+commit wireless
+EOU
+exit 0
+EOF
+chmod +x files/etc/uci-defaults/99-k3-wireless
+cat > files/etc/uci-defaults/99-k3-lanip <<'EOF'
+#!/bin/sh
+uci -q set network.lan.ipaddr='192.168.1.1'
+uci -q commit network
+exit 0
+EOF
+chmod +x files/etc/uci-defaults/99-k3-lanip

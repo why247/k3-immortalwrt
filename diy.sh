@@ -88,7 +88,7 @@ cat > files/etc/uci-defaults/99-k3-wireless <<'EOF'
 #!/bin/sh
 # 先删除旧配置，让系统重新检测无线硬件，生成带 path 的配置
 rm -f /etc/config/wireless
-wifi config
+wifi config; if [ -z "$(uci -q get wireless.radio0.path)" ] || [ -z "$(uci -q get wireless.radio1.path)" ]; then echo "99-k3-wireless: no phy detected, retry next boot" >&2; rm -f /etc/config/wireless; exit 1; fi # guard: phy 未就绪则失败重试，不写坏配置
 # 动态检测哪个 radio 是 2.4G（防止 PCIe 枚举顺序变化）
 if [ "$(uci -q get wireless.radio0.band)" = "2g" ]; then
   RADIO_2G="radio0"

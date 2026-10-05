@@ -97,7 +97,6 @@ else
   RADIO_2G="radio1"
   RADIO_5G="radio0"
 fi
-fi
 # 只修改已存在 radio 的属性（SSID、信道等），不再从零创建 wifi-device
 uci -q batch <<EOU
 set wireless.$RADIO_2G.channel='6'

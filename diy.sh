@@ -86,16 +86,16 @@ fi
 mkdir -p files/etc/uci-defaults
 cat > files/etc/uci-defaults/99-k3-wireless <<'EOF'
 #!/bin/sh
+# 先删除旧配置，让系统重新检测无线硬件，生成带 path 的配置
+rm -f /etc/config/wireless
+wifi config
+# 只修改已存在 radio 的属性（SSID、信道等），不再从零创建 wifi-device
 uci -q batch <<'EOU'
-set wireless.radio0=wifi-device
-set wireless.radio0.type='mac80211'
 set wireless.radio0.channel='auto'
 set wireless.radio0.band='2g'
 set wireless.radio0.htmode='HT20'
 set wireless.radio0.country='CN'
 set wireless.radio0.disabled='0'
-set wireless.radio1=wifi-device
-set wireless.radio1.type='mac80211'
 set wireless.radio1.channel='149'
 set wireless.radio1.band='5g'
 set wireless.radio1.htmode='VHT80'
@@ -125,3 +125,10 @@ uci -q commit network
 exit 0
 EOF
 chmod +x files/etc/uci-defaults/99-k3-lanip
+cat > files/etc/uci-defaults/99-k3-lang <<'EOF'
+#!/bin/sh
+uci set luci.main.lang='zh_cn'
+uci commit luci
+exit 0
+EOF
+chmod +x files/etc/uci-defaults/99-k3-lang

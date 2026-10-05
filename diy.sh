@@ -89,36 +89,50 @@ cat > files/etc/uci-defaults/99-k3-wireless <<'EOF'
 # 先删除旧配置，让系统重新检测无线硬件，生成带 path 的配置
 rm -f /etc/config/wireless
 wifi config
+# 动态检测哪个 radio 是 2.4G（防止 PCIe 枚举顺序变化）
+if [ "$(uci -q get wireless.radio0.band)" = "2g" ]; then
+  RADIO_2G="radio0"
+  RADIO_5G="radio1"
+else
+  RADIO_2G="radio1"
+  RADIO_5G="radio0"
+fi
 # 只修改已存在 radio 的属性（SSID、信道等），不再从零创建 wifi-device
-uci -q batch <<'EOU'
-set wireless.radio0.channel='6'
-set wireless.radio0.band='2g'
-set wireless.radio0.htmode='HT20'
-set wireless.radio0.country='CN'
-set wireless.radio0.txpower='20'
-set wireless.radio0.beamforming='0'
-set wireless.radio0.short_gi='1'
-set wireless.radio0.ldpc='1'
-set wireless.radio0.disabled='0'
-set wireless.radio1.channel='149'
-set wireless.radio1.band='5g'
-set wireless.radio1.htmode='VHT80'
-set wireless.radio1.country='CN'
-set wireless.radio1.txpower='23'
-set wireless.radio1.beamforming='0'
-set wireless.radio1.short_gi='1'
-set wireless.radio1.ldpc='1'
-set wireless.radio1.vht_stbc='1'
-set wireless.radio1.disabled='0'
+uci -q batch <<EOU
+set wireless.$RADIO_2G.channel='6'
+set wireless.$RADIO_2G.band='2g'
+set wireless.$RADIO_2G.htmode='HT20'
+set wireless.$RADIO_2G.country='CN'
+set wireless.$RADIO_2G.txpower='20'
+set wireless.$RADIO_2G.su_beamformer='0'
+set wireless.$RADIO_2G.su_beamformee='0'
+set wireless.$RADIO_2G.mu_beamformer='0'
+set wireless.$RADIO_2G.mu_beamformee='0'
+set wireless.$RADIO_2G.short_gi_20='1'
+set wireless.$RADIO_2G.short_gi_40='1'
+set wireless.$RADIO_2G.disabled='0'
+set wireless.$RADIO_5G.channel='149'
+set wireless.$RADIO_5G.band='5g'
+set wireless.$RADIO_5G.htmode='VHT80'
+set wireless.$RADIO_5G.country='CN'
+set wireless.$RADIO_5G.txpower='23'
+set wireless.$RADIO_5G.su_beamformer='0'
+set wireless.$RADIO_5G.su_beamformee='0'
+set wireless.$RADIO_5G.mu_beamformer='0'
+set wireless.$RADIO_5G.mu_beamformee='0'
+set wireless.$RADIO_5G.short_gi_80='1'
+set wireless.$RADIO_5G.tx_stbc='1'
+set wireless.$RADIO_5G.rx_stbc='1'
+set wireless.$RADIO_5G.disabled='0'
 set wireless.default_radio0=wifi-iface
-set wireless.default_radio0.device='radio0'
+set wireless.default_radio0.device='$RADIO_2G'
 set wireless.default_radio0.mode='ap'
 set wireless.default_radio0.ssid='jy'
 set wireless.default_radio0.encryption='none'
 set wireless.default_radio0.network='lan'
 set wireless.default_radio0.dtim_period='3'
 set wireless.default_radio1=wifi-iface
-set wireless.default_radio1.device='radio1'
+set wireless.default_radio1.device='$RADIO_5G'
 set wireless.default_radio1.mode='ap'
 set wireless.default_radio1.ssid='jy'
 set wireless.default_radio1.encryption='none'

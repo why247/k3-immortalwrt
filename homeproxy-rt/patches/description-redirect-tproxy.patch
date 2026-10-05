@@ -1,0 +1,30 @@
+--- a/Makefile
++++ b/Makefile
+@@ -4,7 +4,7 @@
+ 
+ include $(TOPDIR)/rules.mk
+ 
+-LUCI_TITLE:=The modern ImmortalWRT proxy platform for ARM64/AMD64. Powered by Sing-Box/TUN/AI Edition
++LUCI_TITLE:=The modern ImmortalWRT proxy platform for ARM64/AMD64. Powered by Sing-Box/Redirect+TPROXY
+ LUCI_PKGARCH:=all
+ LUCI_DEPENDS:= \
+ 
+--- a/htdocs/luci-static/resources/view/homeproxy/server.js
++++ b/htdocs/luci-static/resources/view/homeproxy/server.js
+@@ -110,7 +110,7 @@
+ 
+ 		m = new form.Map('homeproxy', _('HomeProxy Server'),
+-		_('The modern ImmortalWRT proxy platform for ARM64/AMD64. Powered by Sing-Box/TUN/AI Edition'));
++		_('The modern ImmortalWRT proxy platform for ARM64/AMD64. Powered by Sing-Box/Redirect+TPROXY'));
+ 
+ 		s = m.section(form.TypedSection);
+ 
+--- a/htdocs/luci-static/resources/view/homeproxy/client.js
++++ b/htdocs/luci-static/resources/view/homeproxy/client.js
+@@ -194,7 +194,7 @@
+ 
+ 		m = new form.Map('homeproxy', _('HomeProxy'),
+-		_('The modern ImmortalWRT proxy platform for ARM64/AMD64. Powered by Sing-Box/TUN/AI Edition'));
++		_('The modern ImmortalWRT proxy platform for ARM64/AMD64. Powered by Sing-Box/Redirect+TPROXY'));
+ 
+ 		let domainListCache = Object.create(null),

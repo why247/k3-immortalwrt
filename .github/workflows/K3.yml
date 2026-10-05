@@ -86,7 +86,9 @@ jobs:
       uses: softprops/action-gh-release@master
       with:
         tag_name: K3_ImmortalWrt_${{ env.PACKAGED_OUTPUTDATE }}
-        files: openwrt/bin/targets/bcm53xx/generic/*.bin
+        files: |
+          openwrt/bin/targets/bcm53xx/generic/*.bin
+          openwrt/bin/targets/bcm53xx/generic/*.trx
         body: |
           斐讯 K3 专用固件
           * 基本信息

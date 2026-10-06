@@ -94,7 +94,7 @@ jobs:
     - name: 发布固件
       uses: softprops/action-gh-release@master
       with:
-        tag_name: K3_ImmortalWrt_${{ env.PACKAGED_OUTPUTDATE }}
+        tag_name: K3_ImmortalWrt_${{ github.run_number }}
         files: |
           openwrt/bin/targets/bcm53xx/generic/*.bin
           openwrt/bin/targets/bcm53xx/generic/*.trx

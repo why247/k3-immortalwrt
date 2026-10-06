@@ -1,0 +1,12 @@
+--- a/Makefile
++++ b/Makefile
+@@ -10,7 +10,8 @@
+ 	+luci-base \
+ 	+sing-box \
+ 	+firewall4 \
+-	+kmod-tun \
++	+kmod-nft-tproxy \
++	+ip-full \
+ 	+kmod-nft-queue \
+ 	+curl \
+ 	+flock \

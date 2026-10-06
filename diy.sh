@@ -109,8 +109,13 @@ cat > files/etc/uci-defaults/99-k3-wireless <<'EOF'
 # - 有幽灵 radio：禁用
 
 [ -f /etc/config/wireless ] || {
-  echo "99-k3-wireless: no wireless config yet, will retry" >&2
-  exit 1
+  echo "99-k3-wireless: no wireless config, generating..." >&2
+  wifi config 2>/dev/null
+    sleep 2
+  }
+  [ -f /etc/config/wireless ] || {
+    echo "99-k3-wireless: still no config, abort" >&2
+    exit 0
 }
 
 # 找真硬件（有 path + 有 band）

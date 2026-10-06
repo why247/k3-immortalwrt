@@ -54,6 +54,8 @@ if [ -d "$HP_RT" ]; then
     exit 1
   }
   echo "HomeProxy patches applied"
+  # Fix math module bug (ucode has no math)
+  sed -i "s/import { isnan } from 'math';/const isnan = (x) => x !== x;/" package/luci-app-homeproxy/root/etc/homeproxy/scripts/generate_client.uc
   # 更新描述：TUN -> Redirect+TPROXY (用 sed，比 patch 更稳健)
   sed -i 's|Sing-Box/TUN/AI Edition|Sing-Box/Redirect+TPROXY|g' package/luci-app-homeproxy/Makefile
   sed -i 's|Sing-Box/TUN/AI Edition|Sing-Box/Redirect+TPROXY|g' package/luci-app-homeproxy/htdocs/luci-static/resources/view/homeproxy/server.js
@@ -147,7 +149,7 @@ set wireless.$RADIO_2G.disabled='0'
 set wireless.$RADIO_5G.channel='36'
 set wireless.$RADIO_5G.band='5g'
 set wireless.$RADIO_5G.htmode='VHT160'
-set wireless.$RADIO_5G.country='CN'
+set wireless.$RADIO_5G.country='US'
 set wireless.$RADIO_5G.txpower='25'
 set wireless.$RADIO_5G.disabled='0'
 EOU
@@ -207,3 +209,17 @@ fi
 exit 0
 EOF
 chmod +x files/etc/uci-defaults/99-k3-lang
+
+# K3 5G txpower via iw on boot (brcmfmac ignores UCI txpower)
+mkdir -p files/etc/uci-defaults
+cat > files/etc/uci-defaults/98-k3-txpower <<'TXEOF'
+#!/bin/sh
+for i in 1 2 3 4 5 6 7 8 9 10; do
+  sleep 3
+  WDEV=$(iw dev 2>/dev/null | grep -B1 "channel 36" | grep Interface | awk '{print $2}')
+  [ -n "$WDEV" ] && break
+done
+[ -n "$WDEV" ] && iw dev "$WDEV" set txpower fixed 2500 2>/dev/null
+exit 0
+TXEOF
+chmod +x files/etc/uci-defaults/98-k3-txpower

@@ -4,6 +4,9 @@ set -e
 # 更新 feeds
 ./scripts/feeds update -a
 
+# 安装 feeds（必须在拷贝本地包之前，否则会覆盖本地包）
+./scripts/feeds install -a
+
 # HomeProxy：使用 VIKINGYFY/packages 的源码
 rm -rf /tmp/viking-packages package/luci-app-homeproxy package/sing-box
 git clone --depth=1 https://github.com/VIKINGYFY/packages /tmp/viking-packages || {
@@ -76,7 +79,6 @@ else
 fi
 
 # 安装 feeds
-./scripts/feeds install -a
 
 # 验证中文包在 feeds 里存在（如果不存在，make defconfig 会静默丢掉）
 echo "Checking Chinese language packages in feeds..."

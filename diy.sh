@@ -143,7 +143,7 @@ set wireless.$RADIO_5G.channel='36'
 set wireless.$RADIO_5G.band='5g'
 set wireless.$RADIO_5G.htmode='VHT160'
 set wireless.$RADIO_5G.country='CN'
-set wireless.$RADIO_5G.txpower='20'
+set wireless.$RADIO_5G.txpower='25'
 set wireless.$RADIO_5G.disabled='0'
 EOU
 

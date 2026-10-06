@@ -72,7 +72,16 @@ jobs:
         sed -i 's/^CONFIG_TARGET_bcm53xx_DEVICE_dlink_dir-885l=y/# CONFIG_TARGET_bcm53xx_DEVICE_dlink_dir-885l is not set/' .config
         grep -q "dlink_dir-890l is not set" .config || echo "# CONFIG_TARGET_bcm53xx_DEVICE_dlink_dir-890l is not set" >> .config
         grep -q "dlink_dir-885l is not set" .config || echo "# CONFIG_TARGET_bcm53xx_DEVICE_dlink_dir-885l is not set" >> .config
-        make download -j$(( $(nproc) * 2 ))
+        
+        
+        # 确保中文包被选中（make defconfig 可能静默丢掉它们）
+        for pkg in luci-i18n-base-zh-cn luci-i18n-filemanager-zh-cn luci-i18n-homeproxy-zh-cn; do
+          if ! grep -q "^CONFIG_PACKAGE_${pkg}=y" .config; then
+            echo "CONFIG_PACKAGE_${pkg}=y" >> .config
+            echo "Re-added missing $pkg to .config"
+          fi
+        done
+        make defconfig; make download -j$(( $(nproc) * 2 ))
         find dl -size -1k -exec ls -l {} \;
         find dl -size -1k -exec rm -f {} \;
 

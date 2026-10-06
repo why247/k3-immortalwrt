@@ -7,6 +7,9 @@
 # `patch --dry-run`, and the whole run aborts (non-zero exit) on the first
 # mismatch. A mismatch means the upstream source moved on and the patch set
 # needs a refresh -- fix the patches, do not work around them.
+#
+# Idempotent: if a patch is already applied (reverse dry-run succeeds),
+# it is skipped and counted as success.
 set -eu
 
 # --fuzz=0: any context mismatch is a hard failure, never a silent best-effort.
@@ -19,11 +22,18 @@ PATCH_DIR="$(cd "$(dirname "$0")" && pwd)/patches"
 [ -d "$PATCH_DIR" ] || { echo "error: patches dir not found: $PATCH_DIR" >&2; exit 1; }
 
 count=0
+skipped=0
 for p in "$PATCH_DIR"/*.patch; do
 	[ -f "$p" ] || continue
 	count=$((count + 1))
 	name="$(basename "$p")"
 	printf 'checking %s...\n' "$name"
+	# If reverse dry-run succeeds, patch is already applied -> skip (idempotent)
+	if patch $PATCH_OPTS --dry-run -R --silent -d "$SRC_DIR" < "$p" 2>/dev/null; then
+		printf '  already applied, skipping %s\n' "$name"
+		skipped=$((skipped + 1))
+		continue
+	fi
 	if ! patch $PATCH_OPTS --dry-run --silent -d "$SRC_DIR" < "$p"; then
 		printf 'error: PATCH MISMATCH: %s does not apply cleanly to %s\n' "$name" "$SRC_DIR" >&2
 		printf 'error: upstream source has changed; refresh the patch set instead of skipping it.\n' >&2
@@ -33,17 +43,23 @@ done
 
 [ "$count" -gt 0 ] || { echo "error: no patch files found in $PATCH_DIR" >&2; exit 1; }
 
+applied=0
 for p in "$PATCH_DIR"/*.patch; do
 	[ -f "$p" ] || continue
 	name="$(basename "$p")"
+	# Skip if already applied
+	if patch $PATCH_OPTS --dry-run -R --silent -d "$SRC_DIR" < "$p" 2>/dev/null; then
+		continue
+	fi
 	printf 'applying %s...\n' "$name"
 	if ! patch $PATCH_OPTS --silent -d "$SRC_DIR" < "$p"; then
 		printf 'error: failed to apply %s\n' "$name" >&2
 		exit 1
 	fi
+	applied=$((applied + 1))
 done
 
-printf 'All %d patches applied successfully.\n' "$count"
+printf 'All %d patches applied successfully (%d newly applied, %d already applied).\n' "$count" "$applied" "$skipped"
 
 # Ship pre-seeded data files (e.g. the initial CN IP list so the first boot
 # already has kernel-layer bypass data before the first resource update).

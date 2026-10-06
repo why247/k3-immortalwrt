@@ -4,7 +4,7 @@
  		outbound.stream_receive_window = !isEmpty(node.hysteria_stream_receive_window) ? `${node.hysteria_stream_receive_window} B` : null;
  		outbound.connection_receive_window = !isEmpty(node.hysteria_connection_receive_window) ? `${node.hysteria_connection_receive_window} B` : null;
  		outbound.disable_path_mtu_discovery = strToBool(node.hysteria_disable_path_mtu_discovery);
-+		/* AP8220 HY2 千兆优化 (P1): QUIC 保活 + 并发流 */
++		/* HY2 千兆优化: QUIC 保活 + 并发流 */
 +		outbound.keep_alive_period = '15s';
 +		outbound.max_concurrent_streams = 1000;
  		outbound.disable_chrome_parrot = (node.type === 'hysteria2') ? strToBool(node.hysteria_disable_chrome_parrot) : null;

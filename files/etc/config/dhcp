@@ -20,6 +20,7 @@ config dhcp 'lan'
 	option limit '150'
 	option leasetime '12h'
 	option ra 'server'
+	option dhcpv4 'server'
 	option dhcpv6 'server'
 
 config dhcp 'wan'

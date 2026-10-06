@@ -93,16 +93,43 @@ cat > files/etc/uci-defaults/99-k3-wireless <<'EOF'
 #!/bin/sh
 # 先删除旧配置，让系统重新检测无线硬件，生成带 path 的配置
 rm -f /etc/config/wireless
-wifi config; if [ -z "$(uci -q get wireless.radio0.path)" ] || [ -z "$(uci -q get wireless.radio1.path)" ]; then echo "99-k3-wireless: no phy detected, retry next boot" >&2; rm -f /etc/config/wireless; exit 1; fi # guard: phy 未就绪则失败重试，不写坏配置
-# 动态检测哪个 radio 是 2.4G（防止 PCIe 枚举顺序变化）
-if [ "$(uci -q get wireless.radio0.band)" = "2g" ]; then
-  RADIO_2G="radio0"
-  RADIO_5G="radio1"
-else
-  RADIO_2G="radio1"
-  RADIO_5G="radio0"
+wifi config
+# 动态查找真正的 2.4G 和 5G radio（按 band 属性，不假设 radio 编号）
+# 跳过 "unknown" 或无 path 的幽灵 radio
+RADIO_2G=""
+RADIO_5G=""
+for r in $(uci -q show wireless | grep "wireless\..*\.band=" | cut -d. -f2 | cut -d= -f1 | sort -u); do
+  # 跳过无 path 的（幽灵设备）
+  [ -z "$(uci -q get wireless.$r.path)" ] && continue
+  band="$(uci -q get wireless.$r.band)"
+  case "$band" in
+    2g|2G) [ -z "$RADIO_2G" ] && RADIO_2G="$r" ;;
+    5g|5G) [ -z "$RADIO_5G" ] && RADIO_5G="$r" ;;
+  esac
+done
+# 兜底：如果 band 属性没有，用 phy 的频段能力判断
+if [ -z "$RADIO_2G" ] || [ -z "$RADIO_5G" ]; then
+  for r in $(uci -q show wireless | grep "wireless\..*\.path=" | cut -d. -f2 | sort -u); do
+    [ -n "$RADIO_2G" ] && [ -n "$RADIO_5G" ] && break
+    # 检查是否已有 band 分配
+    [ "$r" = "$RADIO_2G" ] || [ "$r" = "$RADIO_5G" ] && continue
+    # 通过 iw phy 信息判断（如果可用）
+    phy="$(uci -q get wireless.$r.path | sed 's/.*\///')"
+    if iw phy "$phy" info 2>/dev/null | grep -q "2412 MHz"; then
+      [ -z "$RADIO_2G" ] && RADIO_2G="$r"
+    fi
+    if iw phy "$phy" info 2>/dev/null | grep -q "5180 MHz"; then
+      [ -z "$RADIO_5G" ] && RADIO_5G="$r"
+    fi
+  done
 fi
-# 只修改已存在 radio 的属性（SSID、信道等），不再从零创建 wifi-device
+if [ -z "$RADIO_2G" ] || [ -z "$RADIO_5G" ]; then
+  echo "99-k3-wireless: cannot find real 2G/5G radios (2G=$RADIO_2G 5G=$RADIO_5G), retry next boot" >&2
+  rm -f /etc/config/wireless
+  exit 1
+fi
+echo "99-k3-wireless: using 2G=$RADIO_2G 5G=$RADIO_5G"
+# 只修改已存在 radio 的属性，不再从零创建 wifi-device
 uci -q batch <<EOU
 set wireless.$RADIO_2G.channel='6'
 set wireless.$RADIO_2G.band='2g'
@@ -129,21 +156,34 @@ set wireless.$RADIO_5G.short_gi_80='1'
 set wireless.$RADIO_5G.tx_stbc='1'
 set wireless.$RADIO_5G.rx_stbc='1'
 set wireless.$RADIO_5G.disabled='0'
-set wireless.default_radio0=wifi-iface
-set wireless.default_radio0.device='$RADIO_2G'
-set wireless.default_radio0.mode='ap'
-set wireless.default_radio0.ssid='jy'
-set wireless.default_radio0.encryption='none'
-set wireless.default_radio0.network='lan'
-set wireless.default_radio0.dtim_period='3'
-set wireless.default_radio1=wifi-iface
-set wireless.default_radio1.device='$RADIO_5G'
-set wireless.default_radio1.mode='ap'
-set wireless.default_radio1.ssid='jy'
-set wireless.default_radio1.encryption='none'
-set wireless.default_radio1.network='lan'
+EOU
+# 删除所有旧的 wifi-iface，重建两个（SSID jy，无密码）
+uci -q show wireless | grep "wireless\..*=wifi-iface" | cut -d. -f2 | cut -d= -f1 | while read -r iface; do
+  uci -q delete "wireless.$iface"
+done
+uci -q batch <<EOU
+set wireless.wifi_2g=wifi-iface
+set wireless.wifi_2g.device='$RADIO_2G'
+set wireless.wifi_2g.mode='ap'
+set wireless.wifi_2g.ssid='jy'
+set wireless.wifi_2g.encryption='none'
+set wireless.wifi_2g.network='lan'
+set wireless.wifi_2g.dtim_period='3'
+set wireless.wifi_2g.disabled='0'
+set wireless.wifi_5g=wifi-iface
+set wireless.wifi_5g.device='$RADIO_5G'
+set wireless.wifi_5g.mode='ap'
+set wireless.wifi_5g.ssid='jy'
+set wireless.wifi_5g.encryption='none'
+set wireless.wifi_5g.network='lan'
+set wireless.wifi_5g.disabled='0'
 commit wireless
 EOU
+# 禁用幽灵 radio（有 path 但无 band 的）
+for r in $(uci -q show wireless | grep "wireless\..*\.path=" | cut -d. -f2 | sort -u); do
+  [ "$r" = "$RADIO_2G" ] || [ "$r" = "$RADIO_5G" ] || uci -q set "wireless.$r.disabled='1'"
+done
+uci -q commit wireless
 exit 0
 EOF
 chmod +x files/etc/uci-defaults/99-k3-wireless

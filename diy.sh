@@ -63,6 +63,14 @@ if [ -d "$HP_RT" ]; then
   grep -q 'GOGC=200' "$HP_INIT" && echo "sing-box GOGC/GOMEMLIMIT set" || echo "WARNING: GOGC not injected" >&2
   CN_IP_DIR="package/luci-app-homeproxy/root/etc/homeproxy/resources"
   mkdir -p "$CN_IP_DIR"
+  # geolocation-!cn 规则集：已知国外域名直接走代理，跳过国内 DNS 二次解析
+  NONCN_URL='https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geosite/geolocation-!cn.srs'
+  if curl -fsSL --retry 3 --max-time 60 "$NONCN_URL" -o "$CN_IP_DIR/geosite_noncn.srs.tmp" && [ "$(wc -c < "$CN_IP_DIR/geosite_noncn.srs.tmp")" -gt 10000 ]; then
+    mv "$CN_IP_DIR/geosite_noncn.srs.tmp" "$CN_IP_DIR/geosite_noncn.srs"
+    echo "Pre-seeded geosite_noncn.srs"
+  else
+    rm -f "$CN_IP_DIR/geosite_noncn.srs.tmp"
+  fi
   if curl -fsSL --retry 3 --max-time 60 \
       "https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@meta/geo/geoip/cn.list" \
       -o "$CN_IP_DIR/cn_ip.list.tmp"; then

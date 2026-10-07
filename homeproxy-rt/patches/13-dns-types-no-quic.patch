@@ -1,0 +1,66 @@
+diff --git a/root/etc/homeproxy/scripts/generate_client.uc b/root/etc/homeproxy/scripts/generate_client.uc
+index 10e9c8a..92ca21f 100755
+--- a/root/etc/homeproxy/scripts/generate_client.uc
++++ b/root/etc/homeproxy/scripts/generate_client.uc
+@@ -602,15 +602,24 @@ if (!isEmpty(main_node)) {
+ 		/* Non-mainland AAAA: answer empty at once so clients go straight to
+ 		 * the IPv4 FakeIP. Mainland AAAA (real addresses, above) stays, so
+ 		 * domestic sites keep native IPv6 when IPv6 support is on. */
++		/* HTTPS/SVCB too: browsers query them for every site, and their
++		 * address hints would carry real IPs past FakeIP anyway. */
+ 		push(config.dns.rules, {
+-			query_type: ['AAAA'],
++			query_type: ['AAAA', 'HTTPS', 'SVCB'],
+ 			action: 'predefined',
+ 			rcode: 'NOERROR'
+ 		});
+ 		push(config.dns.rules, {
++			query_type: ['A'],
+ 			action: 'route',
+ 			server: 'fakeip-dns'
+ 		});
++		/* FakeIP only answers address queries; send the rest (TXT, SRV,
++		 * MX...) through the proxied DNS instead of failing them. */
++		push(config.dns.rules, {
++			action: 'route',
++			server: 'main-dns'
++		});
+ 	}
+ }
+ /* DNS end */
+@@ -829,12 +838,22 @@ if (!isEmpty(main_node)) {
+ 			action: 'route',
+ 			outbound: 'direct-out'
+ 		});
+-		if (has_geosite_noncn)
++		/* No QUIC through the tunnel: QUIC inside HY2 datagrams gets
++		 * fragmented and retransmitted whole; rejecting UDP/443 makes
++		 * browsers fall back to TCP at once. Direct traffic keeps QUIC. */
++		if (has_geosite_noncn) {
++			push(config.route.rules, {
++				rule_set: 'geosite-noncn',
++				network: 'udp',
++				port: 443,
++				action: 'reject'
++			});
+ 			push(config.route.rules, {
+ 				rule_set: 'geosite-noncn',
+ 				action: 'route',
+ 				outbound: 'main-out'
+ 			});
++		}
+ 		/* FakeIP hides the real address from the nftables CN-IP bypass, so
+ 		 * mainland domains missing from geosite-cn would otherwise go through
+ 		 * the proxy. Resolve them via the mainland DNS and send CN results
+@@ -849,6 +868,11 @@ if (!isEmpty(main_node)) {
+ 			action: 'route',
+ 			outbound: 'direct-out'
+ 		});
++		push(config.route.rules, {
++			network: 'udp',
++			port: 443,
++			action: 'reject'
++		});
+ 	}
+ 
+ 	config.route.final = 'main-out';

@@ -32,13 +32,15 @@ if [ -f package/sing-box/Makefile ]; then
 else
 	echo "WARNING: package/sing-box/Makefile not found, skipping GO_ARM fix" >&2
 fi
-# sing-box 精简构建（K3 闪存只有 26MB）
+# sing-box 精简构建：只跑 HY2 -> 只要 QUIC (+clash_api 给面板)
+# 旧 sed 匹配的是 ^GO_BUILD_TAGS，Makefile 里实际叫 GO_PKG_TAGS，等于一直在编 full 版
+# (tailscale/gvisor/wireguard/acme 全带上，体积和常驻内存都大很多)
 if [ -f package/sing-box/Makefile ]; then
-	sed -i 's/^GO_BUILD_TAGS:=.*/GO_BUILD_TAGS:=with_quic,with_utls,with_clash_api/' package/sing-box/Makefile || \
-	echo "GO_BUILD_TAGS:=with_quic,with_utls,with_clash_api" >> package/sing-box/Makefile
-	echo "sing-box minimal build tags set"
+	sed -i 's/^\([[:space:]]*GO_PKG_TAGS:=\)http2legacy,with_acme.*/\1http2legacy,with_clash_api,with_quic/' package/sing-box/Makefile
+	grep -q 'GO_PKG_TAGS:=http2legacy,with_clash_api,with_quic' package/sing-box/Makefile \
+		&& echo "sing-box tags: http2legacy,with_clash_api,with_quic" \
+		|| echo "WARNING: sing-box GO_PKG_TAGS not changed" >&2
 fi
-
 
 # HomeProxy 补丁集
 HP_RT="$GITHUB_WORKSPACE/homeproxy-rt"
@@ -54,6 +56,11 @@ if [ -d "$HP_RT" ]; then
   sed -i 's|Sing-Box/TUN/AI Edition|Sing-Box/Redirect+TPROXY|g' package/luci-app-homeproxy/htdocs/luci-static/resources/view/homeproxy/server.js
   sed -i 's|Sing-Box/TUN/AI Edition|Sing-Box/Redirect+TPROXY|g' package/luci-app-homeproxy/htdocs/luci-static/resources/view/homeproxy/client.js
   echo "HomeProxy description updated"
+  # sing-box Go 运行时：双核 A9 上 GC 是 HY2 的大头开销
+  # GOGC=200 少一半 GC 次数；GOMEMLIMIT 兜底防止 512MB 被吃爆
+  HP_INIT=package/luci-app-homeproxy/root/etc/init.d/homeproxy
+  sed -i '/QUIC_GO_DISABLE_GSO/a\\t\tprocd_append_param env GOGC=200 GOMEMLIMIT=160MiB' "$HP_INIT"
+  grep -q 'GOGC=200' "$HP_INIT" && echo "sing-box GOGC/GOMEMLIMIT set" || echo "WARNING: GOGC not injected" >&2
   CN_IP_DIR="package/luci-app-homeproxy/root/etc/homeproxy/resources"
   mkdir -p "$CN_IP_DIR"
   if curl -fsSL --retry 3 --max-time 60 \
@@ -91,105 +98,3 @@ if [ -f "$BCM53XX_MK" ]; then
   sed -i 's/^TARGET_DEVICES += dlink_dwl-8610ap/# TARGET_DEVICES += dlink_dwl-8610ap/' "$BCM53XX_MK"
   echo "D-Link devices removed"
 fi
-
-# --- K3 无线 + LAN (2026-10-04) ---
-mkdir -p files/etc/uci-defaults
-cat > files/etc/uci-defaults/99-k3-wireless <<'EOF'
-#!/bin/sh
-[ -f /etc/config/wireless ] || {
-  echo "99-k3-wireless: no wireless config, generating..." >&2
-  wifi config 2>/dev/null
-    sleep 2
-  }
-  [ -f /etc/config/wireless ] || {
-    echo "99-k3-wireless: still no config, abort" >&2
-    exit 0
-}
-RADIOS=""
-for r in $(uci -q show wireless 2>/dev/null | grep -o "wireless\.[^.]*=wifi-device" | cut -d. -f2 | cut -d= -f1 | sort); do
-  [ -n "$(uci -q get wireless.$r.path 2>/dev/null)" ] || continue
-  RADIOS="$RADIOS $r"
-done
-RADIO_2G=$(echo $RADIOS | cut -d' ' -f2)
-RADIO_5G=$(echo $RADIOS | cut -d' ' -f3)
-[ -n "$RADIO_2G" ] && [ -n "$RADIO_5G" ] || {
-  echo "99-k3-wireless: cannot find 2G/5G radios, skip" >&2
-  exit 0
-}
-echo "99-k3-wireless: 2G=$RADIO_2G 5G=$RADIO_5G, enforcing config..."
-uci -q batch <<EOU
-set wireless.$RADIO_2G.channel='6'
-set wireless.$RADIO_2G.band='2g'
-set wireless.$RADIO_2G.htmode='HT20'
-set wireless.$RADIO_2G.country='CN'
-set wireless.$RADIO_2G.txpower='20'
-set wireless.$RADIO_2G.disabled='0'
-set wireless.$RADIO_5G.channel='36'
-set wireless.$RADIO_5G.band='5g'
-set wireless.$RADIO_5G.htmode='VHT160'
-set wireless.$RADIO_5G.country='US'
-set wireless.$RADIO_5G.txpower='25'
-set wireless.$RADIO_5G.disabled='0'
-EOU
-for iface in $(uci -q show wireless 2>/dev/null | grep -o "wireless\.[^.]*=wifi-iface" | cut -d. -f2 | cut -d= -f1); do
-  uci -q delete "wireless.$iface" 2>/dev/null
-done
-uci -q batch <<EOU
-set wireless.k3_2g=wifi-iface
-set wireless.k3_2g.device='$RADIO_2G'
-set wireless.k3_2g.mode='ap'
-set wireless.k3_2g.ssid='jy'
-set wireless.k3_2g.encryption='none'
-set wireless.k3_2g.network='lan'
-set wireless.k3_2g.disabled='0'
-set wireless.k3_5g=wifi-iface
-set wireless.k3_5g.device='$RADIO_5G'
-set wireless.k3_5g.mode='ap'
-set wireless.k3_5g.ssid='jy'
-set wireless.k3_5g.encryption='none'
-set wireless.k3_5g.network='lan'
-set wireless.k3_5g.disabled='0'
-commit wireless
-EOU
-for r in $(uci -q show wireless 2>/dev/null | grep -o "wireless\.[^.]*\.path=" | cut -d. -f2 | sort -u); do
-  if [ "$r" != "$RADIO_2G" ] && [ "$r" != "$RADIO_5G" ]; then
-    uci -q set "wireless.$r.disabled='1'" 2>/dev/null
-    echo "99-k3-wireless: disabled phantom $r"
-  fi
-done
-uci -q commit wireless 2>/dev/null
-echo "99-k3-wireless: done"
-exit 0
-EOF
-chmod +x files/etc/uci-defaults/99-k3-wireless
-cat > files/etc/uci-defaults/99-k3-lanip <<'EOF'
-#!/bin/sh
-uci -q set network.lan.ipaddr='192.168.1.1'
-uci -q commit network
-exit 0
-EOF
-chmod +x files/etc/uci-defaults/99-k3-lanip
-cat > files/etc/uci-defaults/99-k3-lang <<'EOF'
-#!/bin/sh
-if [ -f /usr/lib/lua/luci/i18n/base.zh-cn.lmo ] || [ -f /usr/lib/lua/luci/i18n/base.zh_cn.lmo ]; then
-  uci set luci.main.lang='zh_cn'
-  uci commit luci
-  echo "99-k3-lang: Chinese translation found, set lang=zh_cn"
-else
-  echo "99-k3-lang: Chinese translation NOT found, keeping auto" >&2
-fi
-exit 0
-EOF
-chmod +x files/etc/uci-defaults/99-k3-lang
-mkdir -p files/etc/uci-defaults
-cat > files/etc/uci-defaults/98-k3-txpower <<'TXEOF'
-#!/bin/sh
-for i in 1 2 3 4 5 6 7 8 9 10; do
-  sleep 3
-  WDEV=$(iw dev 2>/dev/null | grep -B1 "channel 36" | grep Interface | awk '{print $2}')
-  [ -n "$WDEV" ] && break
-done
-[ -n "$WDEV" ] && iw dev "$WDEV" set txpower fixed 2500 2>/dev/null
-exit 0
-TXEOF
-chmod +x files/etc/uci-defaults/98-k3-txpower

@@ -1,0 +1,90 @@
+diff --git a/root/etc/homeproxy/scripts/generate_client.uc b/root/etc/homeproxy/scripts/generate_client.uc
+index c47ef4f..a85312e 100755
+--- a/root/etc/homeproxy/scripts/generate_client.uc
++++ b/root/etc/homeproxy/scripts/generate_client.uc
+@@ -394,7 +394,19 @@ function has_mac_control() {
+ 	])) > 0;
+ }
+ 
++/* Known non-mainland domains (geolocation-!cn) skip the mainland DNS
++ * resolve step and go straight to the proxy; optional, only if shipped. */
++const geosite_noncn_path = HP_DIR + '/resources/geosite_noncn.srs';
++const has_geosite_noncn = !!readfile(geosite_noncn_path, 16);
++
+ function add_mainland_rule_sets(rule_sets) {
++	if (has_geosite_noncn)
++		push(rule_sets, {
++			type: 'local',
++			tag: 'geosite-noncn',
++			format: 'binary',
++			path: geosite_noncn_path
++		});
+ 	push(rule_sets, {
+ 		type: 'local',
+ 		tag: 'geoip-cn',
+@@ -807,6 +819,12 @@ if (!isEmpty(main_node)) {
+ 			action: 'route',
+ 			outbound: 'direct-out'
+ 		});
++		if (has_geosite_noncn)
++			push(config.route.rules, {
++				rule_set: 'geosite-noncn',
++				action: 'route',
++				outbound: 'main-out'
++			});
+ 		/* FakeIP hides the real address from the nftables CN-IP bypass, so
+ 		 * mainland domains missing from geosite-cn would otherwise go through
+ 		 * the proxy. Resolve them via the mainland DNS and send CN results
+@@ -843,18 +861,21 @@ if (!isEmpty(main_node)) {
+ /* The cache file only persists Clash API state such as the clash mode and the
+    selected group member, so it is only worth writing while the API is enabled. */
+ const enable_clash_api = main_node === 'urltest';
+-if (enable_clash_api) {
+-	config.experimental = {
+-		clash_api: {
+-			external_controller: `127.0.0.1:${clash_api_port}`
+-		},
+-		cache_file: {
+-			enabled: true,
+-			path: HP_DIR + '/cache/cache.db',
+-			store_dns: false
+-		}
++/* store_fakeip keeps FakeIP mappings across sing-box restarts (daily
++ * resource update), so clients holding cached FakeIP answers keep working.
++ * Without the Clash API the cache lives in tmpfs to spare the flash. */
++config.experimental = {
++	cache_file: {
++		enabled: true,
++		path: enable_clash_api ? HP_DIR + '/cache/cache.db' : RUN_DIR + '/cache.db',
++		store_fakeip: true,
++		store_dns: false
++	}
++};
++if (enable_clash_api)
++	config.experimental.clash_api = {
++		external_controller: `127.0.0.1:${clash_api_port}`
+ 	};
+-}
+ /* Experimental end */
+ 
+ /* Services */
+diff --git a/root/etc/homeproxy/scripts/update_resources.sh b/root/etc/homeproxy/scripts/update_resources.sh
+index 0c10e6a..eac0bb3 100755
+--- a/root/etc/homeproxy/scripts/update_resources.sh
++++ b/root/etc/homeproxy/scripts/update_resources.sh
+@@ -15,6 +15,7 @@ RESULT_PATH="$RUN_DIR/update_resources.result"
+ CN_IP_SOURCE="${CN_IP_SOURCE:-https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@meta/geo/geoip/cn.list}"
+ # Mainland China domain binary rule-set for sing-box (pre-compiled .srs,
+ # same MetaCubeX data as the Mihomo .mrs used by Nikki).
++GEOSITE_NONCN_SOURCE="${GEOSITE_NONCN_SOURCE:-https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geosite/geolocation-!cn.srs}"
+ GEOSITE_SOURCE="${GEOSITE_SOURCE:-https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geosite/cn.srs}"
+ DASHBOARD_SOURCE="${DASHBOARD_SOURCE:-https://codeload.github.com/SagerNet/sing-box-dashboard/zip/refs/heads/gh-pages}"
+ DASHBOARD_VERSION_URL="${DASHBOARD_VERSION_URL:-https://github.com/SagerNet/sing-box-dashboard/commits/gh-pages.atom}"
+@@ -274,6 +275,7 @@ CN_IP_DEFER_VER=1
+ update_hashed_resource "cn_ip" "$CN_IP_SOURCE" "list" "validate_cidr_list" || mark_failed "cn_ip"
+ CN_IP_DEFER_VER=0
+ update_hashed_resource "geosite_cn" "$GEOSITE_SOURCE" "srs" "validate_rule_set" || mark_failed "geosite_cn"
++update_hashed_resource "geosite_noncn" "$GEOSITE_NONCN_SOURCE" "srs" "validate_rule_set" || mark_failed "geosite_noncn"
+ update_dashboard || mark_failed "dashboard"
+ 
+ if [ -n "$FAILED_BRANCHES" ]; then

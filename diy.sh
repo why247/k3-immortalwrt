@@ -27,17 +27,12 @@ rm -rf /tmp/viking-packages
 
 # K3 (BCM4709/Cortex-A9) 无 VFP/NEON, Go 必须软浮点编译, 否则 illegal instruction
 if [ -f package/sing-box/Makefile ]; then
-	# 原理：golang-values.mk 用 GO_ARM:=7 (immediate) 按 CONFIG_CPU_TYPE 的 FPU 推导，
-	# 经 golang-package.mk 在 sing-box Makefile 中被 include，会覆盖之前的值。
-	# 必须把 GO_ARM:=5 放在 include 之后（last-wins），放在第 1 行无效。
 	sed -i '/golang-package\.mk/a GO_ARM:=5' package/sing-box/Makefile
 	echo "GO_ARM=5 forced for sing-box (after golang-package.mk include)"
 else
 	echo "WARNING: package/sing-box/Makefile not found, skipping GO_ARM fix" >&2
 fi
 # sing-box 精简构建（K3 闪存只有 26MB）
-# 只保留 Hysteria2 所需的 with_quic，另含 uTLS 和 Clash API
-# 去掉 gVisor/TUN、WireGuard 等 K3 用不上的模块
 if [ -f package/sing-box/Makefile ]; then
 	sed -i 's/^GO_BUILD_TAGS:=.*/GO_BUILD_TAGS:=with_quic,with_utls,with_clash_api/' package/sing-box/Makefile || \
 	echo "GO_BUILD_TAGS:=with_quic,with_utls,with_clash_api" >> package/sing-box/Makefile
@@ -54,9 +49,7 @@ if [ -d "$HP_RT" ]; then
     exit 1
   }
   echo "HomeProxy patches applied"
-  # Fix math module bug (ucode has no math)
   sed -i "s/import { isnan } from 'math';/const isnan = (x) => x !== x;/" package/luci-app-homeproxy/root/etc/homeproxy/scripts/generate_client.uc
-  # 更新描述：TUN -> Redirect+TPROXY (用 sed，比 patch 更稳健)
   sed -i 's|Sing-Box/TUN/AI Edition|Sing-Box/Redirect+TPROXY|g' package/luci-app-homeproxy/Makefile
   sed -i 's|Sing-Box/TUN/AI Edition|Sing-Box/Redirect+TPROXY|g' package/luci-app-homeproxy/htdocs/luci-static/resources/view/homeproxy/server.js
   sed -i 's|Sing-Box/TUN/AI Edition|Sing-Box/Redirect+TPROXY|g' package/luci-app-homeproxy/htdocs/luci-static/resources/view/homeproxy/client.js
@@ -80,7 +73,7 @@ else
   echo "WARNING: homeproxy-rt not found" >&2
 fi
 
-# 验证中文包在 feeds 里存在（如果不存在，make defconfig 会静默丢掉）
+# 验证中文包在 feeds 里存在
 echo "Checking Chinese language packages in feeds..."
 for pkg in luci-i18n-base-zh-cn luci-i18n-filemanager-zh-cn luci-i18n-homeproxy-zh-cn; do
   if ./scripts/feeds list -r luci 2>/dev/null | grep -q "^$pkg"; then
@@ -103,11 +96,6 @@ fi
 mkdir -p files/etc/uci-defaults
 cat > files/etc/uci-defaults/99-k3-wireless <<'EOF'
 #!/bin/sh
-# K3 无线配置 v3：自愈式，不管当前是什么状态，最终都要达到正确配置
-# - 没有配置：等系统生成后配置
-# - 配置错误：强制修正
-# - 有幽灵 radio：禁用
-
 [ -f /etc/config/wireless ] || {
   echo "99-k3-wireless: no wireless config, generating..." >&2
   wifi config 2>/dev/null
@@ -117,8 +105,6 @@ cat > files/etc/uci-defaults/99-k3-wireless <<'EOF'
     echo "99-k3-wireless: still no config, abort" >&2
     exit 0
 }
-
-# 找真硬件（有 path 的才是真 radio，按序号第一个是2G第二个是5G）
 RADIOS=""
 for r in $(uci -q show wireless 2>/dev/null | grep -o "wireless\.[^.]*=wifi-device" | cut -d. -f2 | cut -d= -f1 | sort); do
   [ -n "$(uci -q get wireless.$r.path 2>/dev/null)" ] || continue
@@ -126,15 +112,11 @@ for r in $(uci -q show wireless 2>/dev/null | grep -o "wireless\.[^.]*=wifi-devi
 done
 RADIO_2G=$(echo $RADIOS | cut -d' ' -f2)
 RADIO_5G=$(echo $RADIOS | cut -d' ' -f3)
-
 [ -n "$RADIO_2G" ] && [ -n "$RADIO_5G" ] || {
   echo "99-k3-wireless: cannot find 2G/5G radios, skip" >&2
   exit 0
 }
-
 echo "99-k3-wireless: 2G=$RADIO_2G 5G=$RADIO_5G, enforcing config..."
-
-# 强制设置正确的 radio 参数（不管当前是什么）
 uci -q batch <<EOU
 set wireless.$RADIO_2G.channel='6'
 set wireless.$RADIO_2G.band='2g'
@@ -149,8 +131,6 @@ set wireless.$RADIO_5G.country='US'
 set wireless.$RADIO_5G.txpower='25'
 set wireless.$RADIO_5G.disabled='0'
 EOU
-
-# 删除所有 wifi-iface，重建（确保 SSID jy、无密码、启用）
 for iface in $(uci -q show wireless 2>/dev/null | grep -o "wireless\.[^.]*=wifi-iface" | cut -d. -f2 | cut -d= -f1); do
   uci -q delete "wireless.$iface" 2>/dev/null
 done
@@ -171,8 +151,6 @@ set wireless.k3_5g.network='lan'
 set wireless.k3_5g.disabled='0'
 commit wireless
 EOU
-
-# 禁用所有非真硬件的 radio
 for r in $(uci -q show wireless 2>/dev/null | grep -o "wireless\.[^.]*\.path=" | cut -d. -f2 | sort -u); do
   if [ "$r" != "$RADIO_2G" ] && [ "$r" != "$RADIO_5G" ]; then
     uci -q set "wireless.$r.disabled='1'" 2>/dev/null
@@ -180,7 +158,6 @@ for r in $(uci -q show wireless 2>/dev/null | grep -o "wireless\.[^.]*\.path=" |
   fi
 done
 uci -q commit wireless 2>/dev/null
-
 echo "99-k3-wireless: done"
 exit 0
 EOF
@@ -194,7 +171,6 @@ EOF
 chmod +x files/etc/uci-defaults/99-k3-lanip
 cat > files/etc/uci-defaults/99-k3-lang <<'EOF'
 #!/bin/sh
-# 只有中文翻译文件存在时才设为中文，否则保持 auto（避免设了 zh_cn 但没翻译包导致英文）
 if [ -f /usr/lib/lua/luci/i18n/base.zh-cn.lmo ] || [ -f /usr/lib/lua/luci/i18n/base.zh_cn.lmo ]; then
   uci set luci.main.lang='zh_cn'
   uci commit luci
@@ -205,8 +181,6 @@ fi
 exit 0
 EOF
 chmod +x files/etc/uci-defaults/99-k3-lang
-
-# K3 5G txpower via iw on boot (brcmfmac ignores UCI txpower)
 mkdir -p files/etc/uci-defaults
 cat > files/etc/uci-defaults/98-k3-txpower <<'TXEOF'
 #!/bin/sh

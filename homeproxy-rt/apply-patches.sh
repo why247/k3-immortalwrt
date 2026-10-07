@@ -13,13 +13,27 @@
 set -eu
 
 # --fuzz=0: any context mismatch is a hard failure, never a silent best-effort.
-PATCH_OPTS="-p1 --fuzz=0"
+PATCH_OPTS="-p1 --fuzz=0 --forward --batch"
 
 SRC_DIR="${1:?usage: apply-patches.sh <path-to-luci-app-homeproxy-source>}"
 PATCH_DIR="$(cd "$(dirname "$0")" && pwd)/patches"
 
 [ -d "$SRC_DIR" ] || { echo "error: source dir not found: $SRC_DIR" >&2; exit 1; }
 [ -d "$PATCH_DIR" ] || { echo "error: patches dir not found: $PATCH_DIR" >&2; exit 1; }
+
+# Idempotent: the patch set is stacked, so per-patch reverse checks cannot
+# detect a fully applied tree; a stamp file written after success does.
+STAMP="$SRC_DIR/.homeproxy-rt-applied"
+if [ -f "$STAMP" ]; then
+	echo "HomeProxy patch set already applied (stamp found), skipping."
+	exit 0
+fi
+
+# Patches are stacked (a later patch may depend on an earlier one), so the
+# verification pass applies them in order to a scratch copy of the tree.
+SCRATCH="$(mktemp -d)"
+trap 'rm -rf "$SCRATCH"' EXIT
+cp -a "$SRC_DIR/." "$SCRATCH/"
 
 count=0
 skipped=0
@@ -29,12 +43,12 @@ for p in "$PATCH_DIR"/*.patch; do
 	name="$(basename "$p")"
 	printf 'checking %s...\n' "$name"
 	# If reverse dry-run succeeds, patch is already applied -> skip (idempotent)
-	if patch $PATCH_OPTS --dry-run -R --silent -d "$SRC_DIR" < "$p" 2>/dev/null; then
+	if patch $PATCH_OPTS --dry-run -R --silent -d "$SCRATCH" < "$p" 2>/dev/null; then
 		printf '  already applied, skipping %s\n' "$name"
 		skipped=$((skipped + 1))
 		continue
 	fi
-	if ! patch $PATCH_OPTS --dry-run --silent -d "$SRC_DIR" < "$p"; then
+	if ! patch $PATCH_OPTS --silent -d "$SCRATCH" < "$p"; then
 		printf 'error: PATCH MISMATCH: %s does not apply cleanly to %s\n' "$name" "$SRC_DIR" >&2
 		printf 'error: upstream source has changed; refresh the patch set instead of skipping it.\n' >&2
 		exit 1
@@ -59,6 +73,7 @@ for p in "$PATCH_DIR"/*.patch; do
 	applied=$((applied + 1))
 done
 
+touch "$STAMP"
 printf 'All %d patches applied successfully (%d newly applied, %d already applied).\n' "$count" "$applied" "$skipped"
 
 # Ship pre-seeded data files (e.g. the initial CN IP list so the first boot

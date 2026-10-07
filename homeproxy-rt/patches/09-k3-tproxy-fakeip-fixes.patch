@@ -1,0 +1,101 @@
+diff --git a/root/etc/homeproxy/scripts/firewall_pre.uc b/root/etc/homeproxy/scripts/firewall_pre.uc
+index 50fef5d..d51feda 100755
+--- a/root/etc/homeproxy/scripts/firewall_pre.uc
++++ b/root/etc/homeproxy/scripts/firewall_pre.uc
+@@ -192,7 +192,7 @@ function uci_cidrs(section, options) {
+ }
+ 
+ function nft_set(name, type, cidrs) {
+-	let decl = `set ${name} {\n\ttype ${type}\n\tflags interval\n`;
++	let decl = `set ${name} {\n\ttype ${type}\n\tflags interval\n\tauto-merge\n`;
+ 	if (length(cidrs))
+ 		decl += `\telements = { ${join(', ', cidrs)} }\n`;
+ 	decl += '}\n';
+@@ -200,11 +200,15 @@ function nft_set(name, type, cidrs) {
+ }
+ 
+ /* Bypass rules shared by all four transparent-proxy chains. */
+-function proxy_bypass_rules(is_prerouting) {
++function proxy_bypass_rules(is_prerouting, proxy_action) {
+ 	let rules = [];
+ 	push(rules, `\tmeta mark ${self_mark} counter return`);
+ 	if (is_prerouting && length(listen_interfaces))
+ 		push(rules, `\tiifname != { "${join('", "', listen_interfaces)}" } counter return`);
++	/* FakeIP v6 range sits inside fc00::/7 (hp_local6): send it to the
++	 * proxy before the local bypass can swallow it. */
++	if (ipv6_support === '1')
++		push(rules, `\tip6 daddr fc00::/18 ${proxy_action}`);
+ 	push(rules, '\tudp dport { 67, 68 } counter return');
+ 	push(rules, '\tudp dport { 546, 547 } counter return');
+ 	push(rules, '\tip daddr @hp_local4 counter return');
+@@ -218,7 +222,7 @@ function proxy_bypass_rules(is_prerouting) {
+ 	return rules;
+ }
+ 
+-function nft_chain(name, hook, prerouting, action) {
++function nft_chain(name, hook, prerouting, l4, action) {
+ 	let out = `chain ${name} {\n\t${hook}; policy accept;\n`;
+ 	/* When IPv6 support is off, IPv6 traffic must not enter the proxy
+ 	 * at all: return immediately so it follows normal routing. Without
+@@ -227,7 +231,10 @@ function nft_chain(name, hook, prerouting, action) {
+ 	 * is off. */
+ 	if (ipv6_support !== '1')
+ 		out += '\tip version 6 counter return\n';
+-	for (let rule in proxy_bypass_rules(prerouting))
++	/* Each chain only acts on one L4 protocol; let the other one leave
++	 * immediately instead of walking every set lookup per packet. */
++	out += `\tmeta l4proto != ${l4} return\n`;
++	for (let rule in proxy_bypass_rules(prerouting, action))
+ 		out += rule + '\n';
+ 	out += `\t${action}\n}\n`;
+ 	return out;
+@@ -251,19 +258,19 @@ if (ipv6_support === '1') {
+ 
+ /* TCP: LAN clients and router-local traffic via nftables redirect. */
+ push(nft, nft_chain('hp_redirect_pre',
+-	'type nat hook prerouting priority dstnat', true,
++	'type nat hook prerouting priority dstnat', true, 'tcp',
+ 	`meta l4proto tcp redirect to :${redirect_port}`));
+ push(nft, nft_chain('hp_redirect_out',
+-	'type nat hook output priority dstnat', false,
++	'type nat hook output priority dstnat', false, 'tcp',
+ 	`meta l4proto tcp redirect to :${redirect_port}`));
+ 
+ /* UDP: LAN clients via TPROXY; router-local traffic is marked here and
+  * picked up by the fwmark policy route (see init.d) into the TPROXY socket. */
+ push(nft, nft_chain('hp_tproxy_pre',
+-	'type filter hook prerouting priority mangle', true,
+-	`meta l4proto udp tproxy to :${tproxy_port}`));
++	'type filter hook prerouting priority mangle', true, 'udp',
++	`meta l4proto udp meta mark set ${tproxy_mark} tproxy to :${tproxy_port} accept`));
+ push(nft, nft_chain('hp_tproxy_out',
+-	'type route hook output priority mangle', false,
++	'type route hook output priority mangle', false, 'udp',
+ 	`meta l4proto udp meta mark set ${tproxy_mark}`));
+ 
+ } /* if (client_enabled) */
+diff --git a/root/etc/homeproxy/scripts/generate_client.uc b/root/etc/homeproxy/scripts/generate_client.uc
+index decdfd5..c47ef4f 100755
+--- a/root/etc/homeproxy/scripts/generate_client.uc
++++ b/root/etc/homeproxy/scripts/generate_client.uc
+@@ -807,6 +807,20 @@ if (!isEmpty(main_node)) {
+ 			action: 'route',
+ 			outbound: 'direct-out'
+ 		});
++		/* FakeIP hides the real address from the nftables CN-IP bypass, so
++		 * mainland domains missing from geosite-cn would otherwise go through
++		 * the proxy. Resolve them via the mainland DNS and send CN results
++		 * direct; everything else still falls through to main-out. */
++		push(config.route.rules, {
++			action: 'resolve',
++			server: 'china-dns',
++			strategy: 'ipv4_only'
++		});
++		push(config.route.rules, {
++			rule_set: 'geoip-cn',
++			action: 'route',
++			outbound: 'direct-out'
++		});
+ 	}
+ 
+ 	config.route.final = 'main-out';

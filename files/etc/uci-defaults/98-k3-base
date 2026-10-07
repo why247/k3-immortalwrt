@@ -1,0 +1,4 @@
+#!/bin/sh
+uci -q set luci.main.mediaurlbase='/luci-static/bootstrap'
+uci -q commit luci
+exit 0

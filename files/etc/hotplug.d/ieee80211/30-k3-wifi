@@ -1,0 +1,5 @@
+#!/bin/sh
+# 在 10-wifi-detect / 20-wireless-defaults 之后执行：phy 出现时把它配成最优参数（只首次）
+[ "$ACTION" = add ] || exit 0
+[ -f /usr/sbin/k3-wifi ] && sh /usr/sbin/k3-wifi
+exit 0

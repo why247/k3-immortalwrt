@@ -22,6 +22,7 @@ CH_5G='36'
 HT_5G='VHT160'       # 4366 4x4 + 160MHz 手机可达 1733Mbps 协商速率
 CH_5G_FB='149'       # 160MHz 起不来（DFS/雷达）时自动回退
 HT_5G_FB='VHT80'
+HT40_MAX_AP=3        # 2.4G 周围强信号(>-75dBm) AP 不超过这个数就开 HT40 冲带宽，否则 HT20 保稳定
 
 LOCK=/var/lock/k3-wifi.lock
 FORCE=0; [ "$1" = "--force" ] && FORCE=1
@@ -55,19 +56,27 @@ has_5g() { iw phy "$1" info 2>/dev/null | grep -E '\* 5[0-9]{3}(\.[0-9]+)? MHz' 
 # 2.4G 选最空的信道：1/6/11 里按扫描到的 AP 信号强度加权
 pick_2g_channel() {
 	local phy=$1 ifc best=6
+	rm -f /tmp/k3-scan-2g
 	ifc=$(ls /sys/class/ieee80211/$phy/device/net 2>/dev/null | head -n1)
 	[ -n "$ifc" ] || { echo $best; return; }
 	ip link set "$ifc" up 2>/dev/null
-	best=$(iw dev "$ifc" scan 2>/dev/null | awk '
+	iw dev "$ifc" scan 2>/dev/null > /tmp/k3-scan-2g
+	best=$(awk '
 		/^BSS /{f=0}
 		/freq:/{f=int($2)}
 		/signal:/{ if (f>0 && f<2500) { s=$2+100; if (s<1) s=1;
 			for (c=1;c<=3;c++){ cf=(c==1?2412:(c==2?2437:2462));
 				d=f-cf; if (d<0) d=-d; if (d<25) load[c]+=s*s } } }
 		END{ b=2; for (c=1;c<=3;c++) if (load[c]<load[b]) b=c;
-			print (b==1?1:(b==2?6:11)) }')
+			print (b==1?1:(b==2?6:11)) }' /tmp/k3-scan-2g)
 	ip link set "$ifc" down 2>/dev/null
 	case "$best" in 1|6|11) echo $best ;; *) echo 6 ;; esac
+}
+
+# 周围强信号 2.4G AP 数量（基于上面同一次扫描）
+count_2g_neighbors() {
+	[ -s /tmp/k3-scan-2g ] || { echo 99; return; }
+	awk '/^BSS /{f=0} /freq:/{f=int($2)} /signal:/{ if (f>0 && f<2500 && $2+0 > -75) n++ } END{print n+0}' /tmp/k3-scan-2g 2>/dev/null || echo 99
 }
 
 setup_iface() { # radio band
@@ -85,7 +94,8 @@ setup_iface() { # radio band
 		set wireless.$s.encryption='$ENC'
 		set wireless.$s.wmm='1'
 		set wireless.$s.isolate='0'
-		set wireless.$s.multicast_to_unicast='0'
+		set wireless.$s.multicast_to_unicast='1'
+		set wireless.$s.dtim_period='1'
 		set wireless.$s.disabled='0'
 	EOF
 	[ -n "$KEY" ] && uci -q set wireless.$s.key="$KEY"
@@ -127,10 +137,13 @@ for e in $R2; do
 	r=${e%%:*}; phy=${e##*:}
 	[ "$FORCE" = 1 ] || [ "$(uci -q get wireless.$r.k3_tuned)" != 1 ] || continue
 	ch=$(pick_2g_channel $phy)
+	n=$(count_2g_neighbors); ht=HT20
+	[ "${n:-99}" -le "$HT40_MAX_AP" ] && ht=HT40
 	uci -q batch <<-EOF
 		set wireless.$r.band='2g'
 		set wireless.$r.channel='$ch'
-		set wireless.$r.htmode='HT20'
+		set wireless.$r.htmode='$ht'
+		set wireless.$r.short_preamble='1'
 		set wireless.$r.country='$COUNTRY'
 		set wireless.$r.txpower='$TXP_2G'
 		set wireless.$r.legacy_rates='0'
@@ -139,7 +152,7 @@ for e in $R2; do
 		set wireless.$r.k3_tuned='1'
 	EOF
 	setup_iface $r 2g
-	changed=1; log "$r($phy) -> 2.4G ch$ch HT20 ${TXP_2G}dBm"
+	changed=1; log "$r($phy) -> 2.4G ch$ch $ht (neighbors=$n) ${TXP_2G}dBm"
 done
 
 for e in $R5; do

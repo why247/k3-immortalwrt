@@ -1,6 +1,40 @@
 #!/bin/sh /etc/rc.common
 # 每次开机都生效的网卡调优（ethtool 设置重启即丢，所以放 init.d）
 START=99
+EXTRA_COMMANDS="irq"
+EXTRA_HELP="	irq on|off|status	有线中断固定 CPU0、无线(PCIe)中断固定 CPU1；off 恢复默认"
+
+IRQ_FLAG=/etc/k3-irq-split   # 文件内容 0 = 关闭分核，其它/不存在 = 开启
+
+set_irq_mask() {
+	# $1 = 正则, $2 = CPU 掩码
+	grep -E "$1" /proc/interrupts | cut -d: -f1 | tr -d ' ' | while read -r irq; do
+		[ -w /proc/irq/$irq/smp_affinity ] && echo "$2" > /proc/irq/$irq/smp_affinity 2>/dev/null
+	done
+}
+
+irq_apply() {
+	if [ "$(cat $IRQ_FLAG 2>/dev/null)" = "0" ]; then
+		set_irq_mask 'eth[0-9]|bgmac|brcmf|pcie|PCIe' 3
+		logger -t k3-tune "IRQ split off (all CPUs)"
+	else
+		# 有线(bgmac)独占 CPU0：国内千兆转发主力
+		set_irq_mask 'eth[0-9]|bgmac' 1
+		# 两张 BCM4366 走 PCIe，挪到 CPU1，不跟有线抢
+		set_irq_mask 'brcmf|pcie|PCIe' 2
+		logger -t k3-tune "IRQ split on (eth->CPU0, wifi->CPU1)"
+	fi
+}
+
+irq() {
+	case "$1" in
+		on)  rm -f $IRQ_FLAG; irq_apply ;;
+		off) echo 0 > $IRQ_FLAG; irq_apply ;;
+		*)   grep -E 'CPU|eth|bgmac|brcmf|pcie|PCIe' /proc/interrupts
+		     for i in $(grep -E 'eth|bgmac|brcmf|pcie|PCIe' /proc/interrupts | cut -d: -f1); do
+			echo "irq $i -> $(cat /proc/irq/$i/smp_affinity)"; done ;;
+	esac
+}
 
 start() {
 	for dev in eth0 eth1 eth2 wan lan1 lan2 lan3 br-lan; do
@@ -8,5 +42,6 @@ start() {
 		# GRO 必须开：旧脚本写成 gro off，每个包单独过协议栈，CPU 成倍上涨
 		ethtool -K $dev gro on gso on sg on rx on tx on 2>/dev/null
 	done
+	irq_apply
 	return 0
 }

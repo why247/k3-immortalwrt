@@ -1,0 +1,177 @@
+#!/bin/sh
+# K3 双频 WiFi 自动配置（BCM4366 x2, brcmfmac FullMAC）
+#
+# 旧方案的问题：
+#   * 静态 /etc/config/wireless 里写死的 PCIe path 与真机不符 -> 5G 段落失效，
+#     系统又自动生成一个默认 "OWRT-5.2G"；
+#   * 2.4G 用了 channel 'auto'，brcmfmac 不支持 ACS，hostapd 起不来 -> 2.4G 消失；
+#   * 2.4G 用 CN、5G 用 US，内核全局只有一个监管域，两边来回打架。
+#
+# 新方案：按“真实 phy 支持的频段”识别 2.4G / 5G，不依赖 path / 顺序；
+# 每个 radio 只在首次初始化一次（k3_tuned=1），之后你在 LuCI 改的设置不会被覆盖。
+# 用法： k3-wifi            首次/热插拔自动执行
+#        k3-wifi --force    强制按最优参数重置 WiFi
+
+SSID='jy'
+ENC='none'           # 与原仓库一致：开放网络。想加密改成 psk2+ccmp 并设置 KEY
+KEY=''
+COUNTRY='US'         # 两个频段必须同一个国家码；US 在你设备上已验证 5G 160MHz 可用
+TXP_2G='20'          # dBm, 100mW
+TXP_5G='25'          # dBm, ~316mW
+CH_5G='36'
+HT_5G='VHT160'       # 4366 4x4 + 160MHz 手机可达 1733Mbps 协商速率
+CH_5G_FB='149'       # 160MHz 起不来（DFS/雷达）时自动回退
+HT_5G_FB='VHT80'
+
+LOCK=/var/lock/k3-wifi.lock
+FORCE=0; [ "$1" = "--force" ] && FORCE=1
+log() { logger -t k3-wifi "$*"; }
+
+exec 9>"$LOCK"
+flock 9 2>/dev/null
+
+[ -s /etc/config/wireless ] || wifi config >/dev/null 2>&1
+[ -s /etc/config/wireless ] || { log "no wireless config"; exit 0; }
+
+# radio 段落 -> phy 名
+radio_phy() {
+	local path phy dev
+	path=$(uci -q get wireless.$1.path)
+	phy=$(uci -q get wireless.$1.phy)
+	[ -n "$phy" ] && [ -d /sys/class/ieee80211/$phy ] && { echo $phy; return 0; }
+	[ -n "$path" ] || return 1
+	for dev in /sys/class/ieee80211/*; do
+		[ -e "$dev/device" ] || continue
+		case "$(readlink -f $dev/device)" in
+			*"$path") echo "${dev##*/}"; return 0 ;;
+		esac
+	done
+	return 1
+}
+
+has_2g() { iw phy "$1" info 2>/dev/null | grep -E '\* 24[0-9]{2}(\.[0-9]+)? MHz' | grep -vq disabled; }
+has_5g() { iw phy "$1" info 2>/dev/null | grep -E '\* 5[0-9]{3}(\.[0-9]+)? MHz' | grep -vq disabled; }
+
+# 2.4G 选最空的信道：1/6/11 里按扫描到的 AP 信号强度加权
+pick_2g_channel() {
+	local phy=$1 ifc best=6
+	ifc=$(ls /sys/class/ieee80211/$phy/device/net 2>/dev/null | head -n1)
+	[ -n "$ifc" ] || { echo $best; return; }
+	ip link set "$ifc" up 2>/dev/null
+	best=$(iw dev "$ifc" scan 2>/dev/null | awk '
+		/^BSS /{f=0}
+		/freq:/{f=int($2)}
+		/signal:/{ if (f>0 && f<2500) { s=$2+100; if (s<1) s=1;
+			for (c=1;c<=3;c++){ cf=(c==1?2412:(c==2?2437:2462));
+				d=f-cf; if (d<0) d=-d; if (d<25) load[c]+=s*s } } }
+		END{ b=2; for (c=1;c<=3;c++) if (load[c]<load[b]) b=c;
+			print (b==1?1:(b==2?6:11)) }')
+	ip link set "$ifc" down 2>/dev/null
+	case "$best" in 1|6|11) echo $best ;; *) echo 6 ;; esac
+}
+
+setup_iface() { # radio band
+	local r=$1 b=$2 s i
+	for i in $(uci -q show wireless | sed -n "s/^wireless\.\([^.=]*\)\.device='\{0,1\}$r'\{0,1\}$/\1/p"); do
+		uci -q delete wireless.$i
+	done
+	s=k3_$b
+	uci -q batch <<-EOF
+		set wireless.$s=wifi-iface
+		set wireless.$s.device='$r'
+		set wireless.$s.network='lan'
+		set wireless.$s.mode='ap'
+		set wireless.$s.ssid='$SSID'
+		set wireless.$s.encryption='$ENC'
+		set wireless.$s.wmm='1'
+		set wireless.$s.isolate='0'
+		set wireless.$s.multicast_to_unicast='0'
+		set wireless.$s.disabled='0'
+	EOF
+	[ -n "$KEY" ] && uci -q set wireless.$s.key="$KEY"
+}
+
+changed=0
+R2=""; R5=""; RDUAL=""
+for r in $(uci -q show wireless | sed -n "s/^wireless\.\([^.=]*\)=wifi-device$/\1/p"); do
+	phy=$(radio_phy $r) || {
+		# 指向不存在硬件的“幽灵” radio（旧静态配置残留）：两块网卡都已出现时才删
+		if [ "$(ls /sys/class/ieee80211 2>/dev/null | wc -l)" -ge 2 ]; then
+			for i in $(uci -q show wireless | sed -n "s/^wireless\.\([^.=]*\)\.device='\{0,1\}$r'\{0,1\}$/\1/p"); do
+				uci -q delete wireless.$i
+			done
+			uci -q delete wireless.$r
+			changed=1; log "removed phantom $r"
+		fi
+		continue
+	}
+	if has_2g $phy && ! has_5g $phy; then R2="$R2 $r:$phy"
+	elif has_5g $phy && ! has_2g $phy; then R5="$R5 $r:$phy"
+	else RDUAL="$RDUAL $r:$phy"; fi
+done
+
+# 两块都报双频时：已有一块确定频段，另一块就是另一个；否则按 PCIe 域 0000=2.4G 兜底
+for e in $RDUAL; do
+	r=${e%%:*}
+	if [ -z "$R2" ] && [ -n "$R5" ]; then R2="$R2 $e"
+	elif [ -z "$R5" ] && [ -n "$R2" ]; then R5="$R5 $e"
+	else
+		case "$(uci -q get wireless.$r.path)" in
+			*pci0000:*) R2="$R2 $e" ;;
+			*) R5="$R5 $e" ;;
+		esac
+	fi
+done
+
+for e in $R2; do
+	r=${e%%:*}; phy=${e##*:}
+	[ "$FORCE" = 1 ] || [ "$(uci -q get wireless.$r.k3_tuned)" != 1 ] || continue
+	ch=$(pick_2g_channel $phy)
+	uci -q batch <<-EOF
+		set wireless.$r.band='2g'
+		set wireless.$r.channel='$ch'
+		set wireless.$r.htmode='HT20'
+		set wireless.$r.country='$COUNTRY'
+		set wireless.$r.txpower='$TXP_2G'
+		set wireless.$r.legacy_rates='0'
+		set wireless.$r.noscan='1'
+		set wireless.$r.disabled='0'
+		set wireless.$r.k3_tuned='1'
+	EOF
+	setup_iface $r 2g
+	changed=1; log "$r($phy) -> 2.4G ch$ch HT20 ${TXP_2G}dBm"
+done
+
+for e in $R5; do
+	r=${e%%:*}; phy=${e##*:}
+	[ "$FORCE" = 1 ] || [ "$(uci -q get wireless.$r.k3_tuned)" != 1 ] || continue
+	uci -q batch <<-EOF
+		set wireless.$r.band='5g'
+		set wireless.$r.channel='$CH_5G'
+		set wireless.$r.htmode='$HT_5G'
+		set wireless.$r.country='$COUNTRY'
+		set wireless.$r.txpower='$TXP_5G'
+		set wireless.$r.legacy_rates='0'
+		set wireless.$r.disabled='0'
+		set wireless.$r.k3_tuned='1'
+	EOF
+	setup_iface $r 5g
+	changed=1; log "$r($phy) -> 5G ch$CH_5G $HT_5G ${TXP_5G}dBm"
+	# 看门狗：DFS 信道 CAC 最长 60s，150s 后 5G 还没起来就回退到 149/80MHz
+	( sleep 150
+	  iw dev 2>/dev/null | awk -v p="phy#${phy#phy}" '$1 ~ /^phy#/{cur=$1} cur==p && /type AP/{ok=1} END{exit !ok}' && exit 0
+	  [ "$(uci -q get wireless.$r.k3_fallback)" = 1 ] && exit 0
+	  uci -q set wireless.$r.channel="$CH_5G_FB"
+	  uci -q set wireless.$r.htmode="$HT_5G_FB"
+	  uci -q set wireless.$r.k3_fallback='1'
+	  uci -q commit wireless
+	  logger -t k3-wifi "$r 160MHz failed, fallback ch$CH_5G_FB $HT_5G_FB"
+	  wifi reload ) </dev/null >/dev/null 2>&1 &
+done
+
+if [ "$changed" = 1 ]; then
+	uci -q commit wireless
+	# 开机阶段 netifd 会自己拉起；运行中（热插拔/--force）才需要 reload
+	[ -n "$K3_BOOT" ] || wifi reload >/dev/null 2>&1
+fi
+exit 0

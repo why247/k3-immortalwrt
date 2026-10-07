@@ -59,6 +59,7 @@ jobs:
         rm -rf ./files ./.config
         mv "$GITHUB_WORKSPACE/files" ./files
         mv "$GITHUB_WORKSPACE/.config" ./.config
+        chmod -R 755 ./files/etc/init.d ./files/usr/sbin ./files/etc/uci-defaults ./files/etc/hotplug.d
 
     - name: SSH连接到Actions
       uses: P3TERX/ssh2actions@main
@@ -103,7 +104,7 @@ jobs:
           * 基本信息
           NAT 二级路由模式，WAN 口 DHCP（接上级路由 LAN）
           默认网关：192.168.1.1，LAN 侧开启 DHCP
-          WiFi: 双频同名 'jy'（密码首次启动后请修改）
+          WiFi: 双频同名 'jy'（开放网络，2.4G 自动选空闲信道 / 5G 36 VHT160，起不来自动回退 149 VHT80）
           账户: root
           密码: password
 

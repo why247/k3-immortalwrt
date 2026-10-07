@@ -1,0 +1,35 @@
+diff --git a/root/etc/homeproxy/scripts/generate_client.uc b/root/etc/homeproxy/scripts/generate_client.uc
+index a85312e..10e9c8a 100755
+--- a/root/etc/homeproxy/scripts/generate_client.uc
++++ b/root/etc/homeproxy/scripts/generate_client.uc
+@@ -585,11 +585,13 @@ if (!isEmpty(main_node)) {
+ 			...parse_dnsserver(china_dns_server)
+ 		});
+ 
++		/* IPv4-only FakeIP: an fc00::/18 (ULA) FakeIP is ranked below IPv4
++		 * by RFC 6724, so clients never use it; with IPv6 support off it is
++		 * unreachable and only costs a Happy Eyeballs stall. */
+ 		push(config.dns.servers, {
+ 			type: 'fakeip',
+ 			tag: 'fakeip-dns',
+-			inet4_range: '198.18.0.0/15',
+-			inet6_range: 'fc00::/18'
++			inet4_range: '198.18.0.0/15'
+ 		});
+ 
+ 		push(config.dns.rules, {
+@@ -597,6 +599,14 @@ if (!isEmpty(main_node)) {
+ 			action: 'route',
+ 			server: 'china-dns'
+ 		});
++		/* Non-mainland AAAA: answer empty at once so clients go straight to
++		 * the IPv4 FakeIP. Mainland AAAA (real addresses, above) stays, so
++		 * domestic sites keep native IPv6 when IPv6 support is on. */
++		push(config.dns.rules, {
++			query_type: ['AAAA'],
++			action: 'predefined',
++			rcode: 'NOERROR'
++		});
+ 		push(config.dns.rules, {
+ 			action: 'route',
+ 			server: 'fakeip-dns'

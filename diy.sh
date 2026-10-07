@@ -59,7 +59,7 @@ if [ -d "$HP_RT" ]; then
   # sing-box Go 运行时：双核 A9 上 GC 是 HY2 的大头开销
   # GOGC=200 少一半 GC 次数；GOMEMLIMIT 兜底防止 512MB 被吃爆
   HP_INIT=package/luci-app-homeproxy/root/etc/init.d/homeproxy
-  sed -i '/QUIC_GO_DISABLE_GSO/a\\t\tprocd_append_param env GOGC=200 GOMEMLIMIT=160MiB' "$HP_INIT"
+  sed -i 's/^\([[:space:]]*\)\(.*QUIC_GO_DISABLE_GSO.*\)$/\1\2\n\1procd_append_param env GOGC=200 GOMEMLIMIT=160MiB/' "$HP_INIT"
   grep -q 'GOGC=200' "$HP_INIT" && echo "sing-box GOGC/GOMEMLIMIT set" || echo "WARNING: GOGC not injected" >&2
   CN_IP_DIR="package/luci-app-homeproxy/root/etc/homeproxy/resources"
   mkdir -p "$CN_IP_DIR"

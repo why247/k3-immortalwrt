@@ -1,5 +1,5 @@
 diff --git a/root/etc/homeproxy/scripts/firewall_pre.uc b/root/etc/homeproxy/scripts/firewall_pre.uc
-index 50fef5d..d51feda 100755
+index 50fef5d..91ee75e 100755
 --- a/root/etc/homeproxy/scripts/firewall_pre.uc
 +++ b/root/etc/homeproxy/scripts/firewall_pre.uc
 @@ -192,7 +192,7 @@ function uci_cidrs(section, options) {
@@ -11,7 +11,7 @@ index 50fef5d..d51feda 100755
  	if (length(cidrs))
  		decl += `\telements = { ${join(', ', cidrs)} }\n`;
  	decl += '}\n';
-@@ -200,11 +200,15 @@ function nft_set(name, type, cidrs) {
+@@ -200,7 +200,7 @@ function nft_set(name, type, cidrs) {
  }
  
  /* Bypass rules shared by all four transparent-proxy chains. */
@@ -20,15 +20,7 @@ index 50fef5d..d51feda 100755
  	let rules = [];
  	push(rules, `\tmeta mark ${self_mark} counter return`);
  	if (is_prerouting && length(listen_interfaces))
- 		push(rules, `\tiifname != { "${join('", "', listen_interfaces)}" } counter return`);
-+	/* FakeIP v6 range sits inside fc00::/7 (hp_local6): send it to the
-+	 * proxy before the local bypass can swallow it. */
-+	if (ipv6_support === '1')
-+		push(rules, `\tip6 daddr fc00::/18 ${proxy_action}`);
- 	push(rules, '\tudp dport { 67, 68 } counter return');
- 	push(rules, '\tudp dport { 546, 547 } counter return');
- 	push(rules, '\tip daddr @hp_local4 counter return');
-@@ -218,7 +222,7 @@ function proxy_bypass_rules(is_prerouting) {
+@@ -218,7 +218,7 @@ function proxy_bypass_rules(is_prerouting) {
  	return rules;
  }
  
@@ -37,7 +29,7 @@ index 50fef5d..d51feda 100755
  	let out = `chain ${name} {\n\t${hook}; policy accept;\n`;
  	/* When IPv6 support is off, IPv6 traffic must not enter the proxy
  	 * at all: return immediately so it follows normal routing. Without
-@@ -227,7 +231,10 @@ function nft_chain(name, hook, prerouting, action) {
+@@ -227,7 +227,10 @@ function nft_chain(name, hook, prerouting, action) {
  	 * is off. */
  	if (ipv6_support !== '1')
  		out += '\tip version 6 counter return\n';
@@ -49,7 +41,7 @@ index 50fef5d..d51feda 100755
  		out += rule + '\n';
  	out += `\t${action}\n}\n`;
  	return out;
-@@ -251,19 +258,19 @@ if (ipv6_support === '1') {
+@@ -251,19 +254,19 @@ if (ipv6_support === '1') {
  
  /* TCP: LAN clients and router-local traffic via nftables redirect. */
  push(nft, nft_chain('hp_redirect_pre',

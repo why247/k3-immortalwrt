@@ -1,0 +1,15 @@
+#!/bin/sh
+# 二级路由去掉双重 NAT
+#   k3-nat off     关闭 K3 WAN 区域的 masquerade（先在主路由加好静态路由！）
+#   k3-nat on      恢复 NAT（默认）
+#   k3-nat status  查看当前状态
+# 主路由需要加：目标 = K3 的 LAN 网段（如 192.168.2.0/24），网关 = K3 的 WAN IP
+# 否则关掉 NAT 后 K3 下的设备会断网。
+zone=$(uci show firewall | sed -n "s/^firewall\.\([^.]*\)\.name='wan'$/\1/p" | head -n1)
+[ -n "$zone" ] || { echo "wan zone not found"; exit 1; }
+case "$1" in
+	off) uci set firewall.$zone.masq='0'; uci commit firewall; fw4 reload
+	     echo "NAT off. LAN: $(uci -q get network.lan.ipaddr)/$(uci -q get network.lan.netmask), WAN IP: $(ip -4 -o addr show dev "$(uci -q get network.wan.device || echo wan)" | awk '{print $4}')" ;;
+	on)  uci set firewall.$zone.masq='1'; uci commit firewall; fw4 reload; echo "NAT on" ;;
+	*)   echo "masq=$(uci -q get firewall.$zone.masq)" ;;
+esac

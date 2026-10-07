@@ -1,4 +1,7 @@
 #!/bin/sh
 uci -q set luci.main.mediaurlbase='/luci-static/bootstrap'
 uci -q commit luci
+# DNS 缓存加大：默认 150 条太小，常用域名反复上游查询；10000 条只占约 1MB
+uci -q set dhcp.@dnsmasq[0].cachesize='10000'
+uci -q commit dhcp
 exit 0

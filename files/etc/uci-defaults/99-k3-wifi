@@ -1,0 +1,4 @@
+#!/bin/sh
+# 首次启动：phy 已就绪就直接配；没就绪的由 hotplug.d/ieee80211/30-k3-wifi 接手
+K3_BOOT=1 sh /usr/sbin/k3-wifi
+exit 0

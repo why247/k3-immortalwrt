@@ -1,8 +1,8 @@
 diff --git a/root/etc/homeproxy/scripts/generate_client.uc b/root/etc/homeproxy/scripts/generate_client.uc
-index 10e9c8a..92ca21f 100755
+index e512f14..593f304 100755
 --- a/root/etc/homeproxy/scripts/generate_client.uc
 +++ b/root/etc/homeproxy/scripts/generate_client.uc
-@@ -602,15 +602,24 @@ if (!isEmpty(main_node)) {
+@@ -597,15 +597,24 @@ if (!isEmpty(main_node)) {
  		/* Non-mainland AAAA: answer empty at once so clients go straight to
  		 * the IPv4 FakeIP. Mainland AAAA (real addresses, above) stays, so
  		 * domestic sites keep native IPv6 when IPv6 support is on. */
@@ -28,7 +28,7 @@ index 10e9c8a..92ca21f 100755
  	}
  }
  /* DNS end */
-@@ -829,12 +838,22 @@ if (!isEmpty(main_node)) {
+@@ -823,12 +832,22 @@ if (!isEmpty(main_node)) {
  			action: 'route',
  			outbound: 'direct-out'
  		});
@@ -52,7 +52,7 @@ index 10e9c8a..92ca21f 100755
  		/* FakeIP hides the real address from the nftables CN-IP bypass, so
  		 * mainland domains missing from geosite-cn would otherwise go through
  		 * the proxy. Resolve them via the mainland DNS and send CN results
-@@ -849,6 +868,11 @@ if (!isEmpty(main_node)) {
+@@ -843,6 +862,11 @@ if (!isEmpty(main_node)) {
  			action: 'route',
  			outbound: 'direct-out'
  		});

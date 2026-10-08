@@ -1,0 +1,69 @@
+diff --git a/root/etc/homeproxy/scripts/firewall_pre.uc b/root/etc/homeproxy/scripts/firewall_pre.uc
+index 24b3cfa..60348de 100755
+--- a/root/etc/homeproxy/scripts/firewall_pre.uc
++++ b/root/etc/homeproxy/scripts/firewall_pre.uc
+@@ -201,28 +201,27 @@ function nft_set(name, type, cidrs) {
+ 
+ /* Bypass rules shared by all four transparent-proxy chains. */
+ function proxy_bypass_rules(is_prerouting, proxy_action) {
++	/* Hot path: no per-rule counters, cheapest and most frequent
++	 * returns first (mainland destinations are the bulk of traffic). */
+ 	let rules = [];
+-	push(rules, `\tmeta mark ${self_mark} counter return`);
++	push(rules, `\tmeta mark ${self_mark} return`);
+ 	/* Reply packets belong to connections that already exist (e.g. the
+-	 * HY2 server answering sing-box), and packets addressed to the router
+-	 * itself (its PPPoE public IP) are never meant for the proxy. Without
+-	 * these, UDP replies from the proxy server arriving on WAN were
+-	 * TPROXY-diverted, stalling every bulk transfer. */
+-	push(rules, '\tct direction reply counter return');
+-	if (is_prerouting)
+-		push(rules, '\tfib daddr type local counter return');
++	 * HY2 server answering sing-box); never divert them. */
++	push(rules, '\tct direction reply return');
+ 	if (is_prerouting && length(listen_interfaces))
+-		push(rules, `\tiifname != { "${join('", "', listen_interfaces)}" } counter return`);
+-	push(rules, '\tudp dport { 67, 68 } counter return');
+-	push(rules, '\tudp dport { 546, 547 } counter return');
+-	push(rules, '\tip daddr @hp_local4 counter return');
+-	push(rules, '\tip daddr @hp_wan_direct4 counter return');
+-	push(rules, '\tip daddr @hp_cn4 counter return');
++		push(rules, `\tiifname != { "${join('", "', listen_interfaces)}" } return`);
++	push(rules, '\tip daddr @hp_cn4 return');
++	push(rules, '\tip daddr @hp_local4 return');
++	push(rules, '\tip daddr @hp_wan_direct4 return');
+ 	if (ipv6_support === '1') {
+-		push(rules, '\tip6 daddr @hp_local6 counter return');
+-		push(rules, '\tip6 daddr @hp_wan_direct6 counter return');
+-		push(rules, '\tip6 daddr @hp_cn6 counter return');
++		push(rules, '\tip6 daddr @hp_cn6 return');
++		push(rules, '\tip6 daddr @hp_local6 return');
++		push(rules, '\tip6 daddr @hp_wan_direct6 return');
+ 	}
++	/* Packets to the router itself (its PPPoE public IP). */
++	if (is_prerouting)
++		push(rules, '\tfib daddr type local return');
++	push(rules, '\tudp dport { 67, 68, 546, 547 } return');
+ 	return rules;
+ }
+ 
+diff --git a/root/etc/homeproxy/scripts/generate_client.uc b/root/etc/homeproxy/scripts/generate_client.uc
+index fed4900..cc84a27 100755
+--- a/root/etc/homeproxy/scripts/generate_client.uc
++++ b/root/etc/homeproxy/scripts/generate_client.uc
+@@ -789,7 +789,14 @@ if (!isEmpty(main_node)) {
+ 		push_bypass(config.route.rules, proxy_match({ rule_set: 'geosite-cn' }));
+ 	}
+ 
+-	push(config.route.rules, { action: 'sniff' });
++	/* FakeIP connections already carry their domain (restored from the
++	 * FakeIP store), so sniffing them only delays server-first protocols.
++	 * Sniff the rest: real-IP connections from clients with their own DNS. */
++	push(config.route.rules, {
++		ip_cidr: ['198.18.0.0/15'],
++		invert: true,
++		action: 'sniff'
++	});
+ 	const control = add_control_policy_rules(config.route.rules, 'main-out');
+ 
+ 	for (let group in domain_groups) {

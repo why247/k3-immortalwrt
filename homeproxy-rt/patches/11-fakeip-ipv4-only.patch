@@ -1,8 +1,8 @@
 diff --git a/root/etc/homeproxy/scripts/generate_client.uc b/root/etc/homeproxy/scripts/generate_client.uc
-index a85312e..10e9c8a 100755
+index d3d92d2..e512f14 100755
 --- a/root/etc/homeproxy/scripts/generate_client.uc
 +++ b/root/etc/homeproxy/scripts/generate_client.uc
-@@ -585,11 +585,13 @@ if (!isEmpty(main_node)) {
+@@ -580,11 +580,13 @@ if (!isEmpty(main_node)) {
  			...parse_dnsserver(china_dns_server)
  		});
  
@@ -18,7 +18,7 @@ index a85312e..10e9c8a 100755
  		});
  
  		push(config.dns.rules, {
-@@ -597,6 +599,14 @@ if (!isEmpty(main_node)) {
+@@ -592,6 +594,14 @@ if (!isEmpty(main_node)) {
  			action: 'route',
  			server: 'china-dns'
  		});

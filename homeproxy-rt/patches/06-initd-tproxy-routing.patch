@@ -1,6 +1,8 @@
+diff --git a/root/etc/init.d/homeproxy b/root/etc/init.d/homeproxy
+index 8eae8f9..0a49571 100755
 --- a/root/etc/init.d/homeproxy
 +++ b/root/etc/init.d/homeproxy
-@@ -35,9 +35,42 @@
+@@ -35,9 +35,42 @@ log() {
  
  clear_firewall() {
  	: > "$RUN_DIR/fw4_input.nft"
@@ -43,7 +45,7 @@
  clear_dnsmasq() {
  	if [ -e "$DNSMASQ_DIR/../dnsmasq-homeproxy.conf" ] || [ -d "$DNSMASQ_DIR" ]; then
  		rm -rf "$DNSMASQ_DIR/../dnsmasq-homeproxy.conf" "$DNSMASQ_DIR"
-@@ -177,7 +210,7 @@
+@@ -177,7 +210,7 @@ sync_subscription_cron() {
  	local client_ready="$1"
  	local auto_update auto_update_time enabled=0
  
@@ -52,7 +54,7 @@
  	config_get auto_update_time "subscription" "auto_update_time" "0 */6 * * *"
  	if [ "$client_ready" -eq 1 ] && [ "$auto_update" -eq 1 ]; then
  		enabled=1
-@@ -275,7 +308,10 @@
+@@ -275,7 +308,10 @@ start_service() {
  		chown -R sing-box:sing-box "$CACHE_DIR"
  	fi
  
@@ -64,7 +66,7 @@
  	local firewall_ready=1
  	if ! HOMEPROXY_SERVER_READY="$server_ready" \
  		ucode "$HP_DIR/scripts/firewall_pre.uc" 2>>"$LOG_PATH"; then
-@@ -292,6 +328,11 @@
+@@ -292,6 +328,11 @@ start_service() {
  		client_ready=0
  		rm -f "$RUN_DIR/sing-box-c.json"
  	fi
@@ -76,7 +78,7 @@
  	if [ "$client_ready" -eq 1 ]; then
  		# DNSMasq rules
  		local dns_port dns_ready=1
-@@ -327,10 +368,10 @@
+@@ -327,10 +368,10 @@ start_service() {
  
  		# QUIC-GO GSO is broken on kernel 6.6 currently
  		uname -r | grep -Eq "^6\.6" && procd_set_param env "QUIC_GO_DISABLE_GSO"="true"
@@ -91,7 +93,7 @@
  		# The client is therefore started outside a jail by design.
  
  		procd_set_param limits core="unlimited"
-@@ -424,6 +465,7 @@
+@@ -424,6 +465,7 @@ stop_service() {
  	config_load "$CONF"
  	sync_subscription_cron 0 || log "Error: failed to clear the subscription update schedule."
  	clear_firewall

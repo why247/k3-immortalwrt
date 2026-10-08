@@ -10,7 +10,8 @@ uci -q commit firewall
 # 2) 网络：packet steering 把软中断分到两个核（替代以前手写 RPS，避免互相覆盖）
 uci -q set network.globals=globals
 uci -q set network.globals.packet_steering='1'
-uci -q set network.lan.ipaddr='192.168.1.1'
+uci -q set network.lan.ipaddr='192.168.2.1'
+uci -q set network.lan.netmask='255.255.255.0'
 uci -q commit network
 
 # 3) 日志放内存

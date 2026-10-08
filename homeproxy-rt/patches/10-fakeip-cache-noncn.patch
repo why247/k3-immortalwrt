@@ -1,8 +1,8 @@
 diff --git a/root/etc/homeproxy/scripts/generate_client.uc b/root/etc/homeproxy/scripts/generate_client.uc
-index c47ef4f..a85312e 100755
+index 5e6e16f..d3d92d2 100755
 --- a/root/etc/homeproxy/scripts/generate_client.uc
 +++ b/root/etc/homeproxy/scripts/generate_client.uc
-@@ -394,7 +394,19 @@ function has_mac_control() {
+@@ -398,7 +398,19 @@ function has_mac_control() {
  	])) > 0;
  }
  
@@ -22,7 +22,7 @@ index c47ef4f..a85312e 100755
  	push(rule_sets, {
  		type: 'local',
  		tag: 'geoip-cn',
-@@ -807,6 +819,12 @@ if (!isEmpty(main_node)) {
+@@ -801,6 +813,12 @@ if (!isEmpty(main_node)) {
  			action: 'route',
  			outbound: 'direct-out'
  		});
@@ -35,7 +35,7 @@ index c47ef4f..a85312e 100755
  		/* FakeIP hides the real address from the nftables CN-IP bypass, so
  		 * mainland domains missing from geosite-cn would otherwise go through
  		 * the proxy. Resolve them via the mainland DNS and send CN results
-@@ -843,18 +861,21 @@ if (!isEmpty(main_node)) {
+@@ -837,18 +855,21 @@ if (!isEmpty(main_node)) {
  /* The cache file only persists Clash API state such as the clash mode and the
     selected group member, so it is only worth writing while the API is enabled. */
  const enable_clash_api = main_node === 'urltest';
@@ -69,7 +69,7 @@ index c47ef4f..a85312e 100755
  
  /* Services */
 diff --git a/root/etc/homeproxy/scripts/update_resources.sh b/root/etc/homeproxy/scripts/update_resources.sh
-index 0c10e6a..eac0bb3 100755
+index c21d536..c2ced7c 100755
 --- a/root/etc/homeproxy/scripts/update_resources.sh
 +++ b/root/etc/homeproxy/scripts/update_resources.sh
 @@ -15,6 +15,7 @@ RESULT_PATH="$RUN_DIR/update_resources.result"
@@ -77,7 +77,7 @@ index 0c10e6a..eac0bb3 100755
  # Mainland China domain binary rule-set for sing-box (pre-compiled .srs,
  # same MetaCubeX data as the Mihomo .mrs used by Nikki).
 +GEOSITE_NONCN_SOURCE="${GEOSITE_NONCN_SOURCE:-https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geosite/geolocation-!cn.srs}"
- GEOSITE_SOURCE="${GEOSITE_SOURCE:-https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geosite/cn.srs}"
+ GEOSITE_SOURCE="${GEOSITE_SOURCE:-https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo-lite/geosite/cn.srs}"
  DASHBOARD_SOURCE="${DASHBOARD_SOURCE:-https://codeload.github.com/SagerNet/sing-box-dashboard/zip/refs/heads/gh-pages}"
  DASHBOARD_VERSION_URL="${DASHBOARD_VERSION_URL:-https://github.com/SagerNet/sing-box-dashboard/commits/gh-pages.atom}"
 @@ -274,6 +275,7 @@ CN_IP_DEFER_VER=1

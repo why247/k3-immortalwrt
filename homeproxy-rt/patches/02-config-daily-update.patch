@@ -1,6 +1,8 @@
+diff --git a/root/etc/config/homeproxy b/root/etc/config/homeproxy
+index 063fdc6..7119057 100644
 --- a/root/etc/config/homeproxy
 +++ b/root/etc/config/homeproxy
-@@ -39,12 +39,12 @@
+@@ -39,12 +39,12 @@ config homeproxy 'tailscale'
  	option advertise_exit_node '0'
  
  config homeproxy 'subscription'

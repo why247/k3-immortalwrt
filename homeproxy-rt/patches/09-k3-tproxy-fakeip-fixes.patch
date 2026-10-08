@@ -67,10 +67,10 @@ index 50fef5d..91ee75e 100755
  
  } /* if (client_enabled) */
 diff --git a/root/etc/homeproxy/scripts/generate_client.uc b/root/etc/homeproxy/scripts/generate_client.uc
-index decdfd5..c47ef4f 100755
+index ee51c50..5e6e16f 100755
 --- a/root/etc/homeproxy/scripts/generate_client.uc
 +++ b/root/etc/homeproxy/scripts/generate_client.uc
-@@ -807,6 +807,20 @@ if (!isEmpty(main_node)) {
+@@ -801,6 +801,20 @@ if (!isEmpty(main_node)) {
  			action: 'route',
  			outbound: 'direct-out'
  		});

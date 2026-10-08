@@ -1,6 +1,8 @@
+diff --git a/root/etc/uci-defaults/luci-homeproxy b/root/etc/uci-defaults/luci-homeproxy
+index 70c34fe..723a7db 100755
 --- a/root/etc/uci-defaults/luci-homeproxy
 +++ b/root/etc/uci-defaults/luci-homeproxy
-@@ -19,6 +19,12 @@
+@@ -19,6 +19,12 @@ if ! uci -q batch <<-EOF >"/dev/null"
  	set firewall.homeproxy_input.position="chain-pre"
  	set firewall.homeproxy_input.chain="input"
  

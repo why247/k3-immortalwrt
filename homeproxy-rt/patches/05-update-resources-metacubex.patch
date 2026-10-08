@@ -1,6 +1,8 @@
+diff --git a/root/etc/homeproxy/scripts/update_resources.sh b/root/etc/homeproxy/scripts/update_resources.sh
+index 7524db1..c21d536 100755
 --- a/root/etc/homeproxy/scripts/update_resources.sh
 +++ b/root/etc/homeproxy/scripts/update_resources.sh
-@@ -10,13 +10,16 @@
+@@ -10,13 +10,16 @@ DASHBOARD_DIR="${DASHBOARD_DIR:-/etc/$NAME/dashboard}"
  RUN_DIR="${RUN_DIR:-/var/run/$NAME}"
  LOG_PATH="$RUN_DIR/$NAME.log"
  RESULT_PATH="$RUN_DIR/update_resources.result"
@@ -21,7 +23,7 @@
  UPDATE_PROXY="${HOMEPROXY_UPDATE_PROXY:-}"
  SING_BOX="${SING_BOX:-/usr/bin/sing-box}"
  
-@@ -38,6 +41,7 @@
+@@ -38,6 +41,7 @@ mark_updated() {
  	UPDATED_BRANCHES="${UPDATED_BRANCHES:+$UPDATED_BRANCHES,}$1"
  	case "$1" in
  	dashboard) DASHBOARD_UPDATED=1 ;;
@@ -29,7 +31,7 @@
  	*) CORE_UPDATED=1 ;;
  	esac
  }
-@@ -62,7 +66,9 @@
+@@ -62,7 +66,9 @@ run_curl() {
  }
  
  download() {
@@ -40,7 +42,7 @@
  		--connect-timeout 10 --max-time 60 -A "$USER_AGENT" -o "$2" "$1" &&
  		test -s "$2"
  }
-@@ -71,22 +77,43 @@
+@@ -71,22 +77,43 @@ validate_rule_set() {
  	"$SING_BOX" rule-set match -f binary "$1" 192.0.2.1 >/dev/null 2>&1
  }
  
@@ -95,7 +97,7 @@
  		--retry-delay 1 --connect-timeout 10 --max-time 30 \
  		-A "$USER_AGENT" "$DASHBOARD_VERSION_URL")" || return 1
  	version="$(printf '%s\n' "$feed" | awk -F '[<>]' '
-@@ -104,55 +131,66 @@
+@@ -104,55 +131,66 @@ fetch_dashboard_version() {
  	printf '%s\n' "$version"
  }
  
@@ -192,7 +194,7 @@
  update_dashboard() {
  	local version old_version index source_dir=""
  	local backup_dir="${DASHBOARD_DIR}.old.$$"
-@@ -223,8 +261,19 @@
+@@ -223,8 +261,19 @@ trap 'rm -rf "$TMP_DIR" "$DASHBOARD_STAGE" "$RESOURCES_DIR/.update.$$.tmp"' EXIT
  trap 'exit 130' INT
  trap 'exit 143' TERM
  
@@ -214,7 +216,7 @@
  update_dashboard || mark_failed "dashboard"
  
  if [ -n "$FAILED_BRANCHES" ]; then
-@@ -241,4 +290,48 @@
+@@ -241,4 +290,48 @@ if [ -z "$UPDATED_BRANCHES" ]; then
  	finish 3
  fi
  

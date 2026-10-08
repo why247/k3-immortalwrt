@@ -170,9 +170,13 @@ for e in $R5; do
 	EOF
 	setup_iface $r 5g
 	changed=1; log "$r($phy) -> 5G ch$CH_5G $HT_5G ${TXP_5G}dBm"
-	# 看门狗：DFS 信道 CAC 最长 60s，150s 后 5G 还没起来就回退到 149/80MHz
-	( sleep 150
-	  iw dev 2>/dev/null | awk -v p="phy#${phy#phy}" '$1 ~ /^phy#/{cur=$1} cur==p && /type AP/{ok=1} END{exit !ok}' && exit 0
+	# 看门狗：首次开机固件加载+160MHz 初始化可能较慢；每 10s 检查，最多等 300s 才回退到 149/80MHz
+	( i=0
+	  while [ $i -lt 30 ]; do
+		sleep 10
+		iw dev 2>/dev/null | awk -v p="phy#${phy#phy}" '$1 ~ /^phy#/{cur=$1} cur==p && /type AP/{ok=1} END{exit !ok}' && exit 0
+		i=$((i+1))
+	  done
 	  [ "$(uci -q get wireless.$r.k3_fallback)" = 1 ] && exit 0
 	  uci -q set wireless.$r.channel="$CH_5G_FB"
 	  uci -q set wireless.$r.htmode="$HT_5G_FB"

@@ -1,3 +1,5 @@
+diff --git a/root/etc/homeproxy/scripts/firewall_pre.uc b/root/etc/homeproxy/scripts/firewall_pre.uc
+index c1026d4..50fef5d 100755
 --- a/root/etc/homeproxy/scripts/firewall_pre.uc
 +++ b/root/etc/homeproxy/scripts/firewall_pre.uc
 @@ -2,9 +2,9 @@
@@ -12,7 +14,7 @@
  
  const cfgname = 'homeproxy';
  const uci = cursor();
-@@ -24,3 +24,251 @@
+@@ -24,3 +24,251 @@ const input_file = RUN_DIR + '/fw4_input.nft';
  
  if (writefile(input_file, length(input) ? join('\n', input) + '\n' : '') === null)
  	exit(1);

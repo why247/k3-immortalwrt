@@ -20,8 +20,7 @@ uci -q delete system.@system[0].log_file
 uci -q set system.@system[0].zram_size_mb='128'
 uci -q commit system
 
-# 4) dnsmasq：缓存 + fakeip 需要关 rebind 保护
-uci -q set dhcp.@dnsmasq[0].cachesize='4096'
+# 4) dnsmasq：fakeip 需要关 rebind 保护
 uci -q set dhcp.@dnsmasq[0].rebind_protection='0'
 uci -q commit dhcp
 

@@ -1,0 +1,167 @@
+diff --git a/root/etc/homeproxy/scripts/generate_client.uc b/root/etc/homeproxy/scripts/generate_client.uc
+index 593f304..fed4900 100755
+--- a/root/etc/homeproxy/scripts/generate_client.uc
++++ b/root/etc/homeproxy/scripts/generate_client.uc
+@@ -112,6 +112,9 @@ if (routing_mode === 'bypass_mainland_china') {
+ 	if (isEmpty(china_dns_server) || type(china_dns_server) !== 'string' || china_dns_server === 'wan')
+ 		china_dns_server = wan_dns;
+ }
++/* The mainland DNS is normally the WAN DNS itself; reuse default-dns then
++ * instead of a duplicate server with its own connections and cache. */
++const china_dns_tag = (china_dns_server === wan_dns) ? 'default-dns' : 'china-dns';
+ const dns_default_strategy = (ipv6_support === '1') ? 'prefer_ipv6' : 'prefer_ipv4';
+ 
+ function make_domain_resolver(server) {
+@@ -398,25 +401,7 @@ function has_mac_control() {
+ 	])) > 0;
+ }
+ 
+-/* Known non-mainland domains (geolocation-!cn) skip the mainland DNS
+- * resolve step and go straight to the proxy; optional, only if shipped. */
+-const geosite_noncn_path = HP_DIR + '/resources/geosite_noncn.srs';
+-const has_geosite_noncn = !!readfile(geosite_noncn_path, 16);
+-
+ function add_mainland_rule_sets(rule_sets) {
+-	if (has_geosite_noncn)
+-		push(rule_sets, {
+-			type: 'local',
+-			tag: 'geosite-noncn',
+-			format: 'binary',
+-			path: geosite_noncn_path
+-		});
+-	push(rule_sets, {
+-		type: 'local',
+-		tag: 'geoip-cn',
+-		format: 'binary',
+-		path: HP_DIR + '/resources/geoip_cn.srs'
+-	});
+ 	push(rule_sets, {
+ 		type: 'local',
+ 		tag: 'geosite-cn',
+@@ -516,7 +501,7 @@ if (!isEmpty(main_node)) {
+ 		...parse_dnsserver(dns_server, 'tcp')
+ 	});
+ 	/* Bypass mode resolves everything unmatched through the mainland server. */
+-	config.dns.final = (routing_mode === 'bypass_mainland_china') ? 'china-dns' : 'main-dns';
++	config.dns.final = (routing_mode === 'bypass_mainland_china') ? china_dns_tag : 'main-dns';
+ 
+ 	if (tailscale_enabled) {
+ 		push(config.dns.servers, {
+@@ -534,7 +519,7 @@ if (!isEmpty(main_node)) {
+ 	let diversion_dns_servers = {};
+ 	function domain_group_dns_server(group) {
+ 		if (group.kind === 'direct')
+-			return (routing_mode === 'bypass_mainland_china') ? 'china-dns' : 'default-dns';
++			return (routing_mode === 'bypass_mainland_china') ? china_dns_tag : 'default-dns';
+ 		if (group.kind === 'main' || domain_group_outbound_tag(group) === 'main-out')
+ 			return 'main-dns';
+ 
+@@ -573,12 +558,13 @@ if (!isEmpty(main_node)) {
+ 		add_domain_dns_rules(group);
+ 
+ 	if (routing_mode === 'bypass_mainland_china') {
+-		push(config.dns.servers, {
+-			tag: 'china-dns',
+-			domain_resolver: make_domain_resolver(),
+-			detour: null,
+-			...parse_dnsserver(china_dns_server)
+-		});
++		if (china_dns_tag === 'china-dns')
++			push(config.dns.servers, {
++				tag: 'china-dns',
++				domain_resolver: make_domain_resolver(),
++				detour: null,
++				...parse_dnsserver(china_dns_server)
++			});
+ 
+ 		/* IPv4-only FakeIP: an fc00::/18 (ULA) FakeIP is ranked below IPv4
+ 		 * by RFC 6724, so clients never use it; with IPv6 support off it is
+@@ -592,7 +578,7 @@ if (!isEmpty(main_node)) {
+ 		push(config.dns.rules, {
+ 			rule_set: 'geosite-cn',
+ 			action: 'route',
+-			server: 'china-dns'
++			server: china_dns_tag
+ 		});
+ 		/* Non-mainland AAAA: answer empty at once so clients go straight to
+ 		 * the IPv4 FakeIP. Mainland AAAA (real addresses, above) stays, so
+@@ -772,7 +758,7 @@ config.route.default_http_client = 'direct-http';
+ if (!isEmpty(main_node)) {
+ 	/* Avoid DNS loop */
+ 	config.route.default_domain_resolver = make_domain_resolver(
+-		(routing_mode === 'bypass_mainland_china') ? 'china-dns' : 'default-dns'
++		(routing_mode === 'bypass_mainland_china') ? china_dns_tag : 'default-dns'
+ 	);
+ 
+ 	/* Transparent proxy pre-match: handle device and address exceptions first. */
+@@ -832,36 +818,11 @@ if (!isEmpty(main_node)) {
+ 			action: 'route',
+ 			outbound: 'direct-out'
+ 		});
+-		/* No QUIC through the tunnel: QUIC inside HY2 datagrams gets
+-		 * fragmented and retransmitted whole; rejecting UDP/443 makes
+-		 * browsers fall back to TCP at once. Direct traffic keeps QUIC. */
+-		if (has_geosite_noncn) {
+-			push(config.route.rules, {
+-				rule_set: 'geosite-noncn',
+-				network: 'udp',
+-				port: 443,
+-				action: 'reject'
+-			});
+-			push(config.route.rules, {
+-				rule_set: 'geosite-noncn',
+-				action: 'route',
+-				outbound: 'main-out'
+-			});
+-		}
+-		/* FakeIP hides the real address from the nftables CN-IP bypass, so
+-		 * mainland domains missing from geosite-cn would otherwise go through
+-		 * the proxy. Resolve them via the mainland DNS and send CN results
+-		 * direct; everything else still falls through to main-out. */
+-		push(config.route.rules, {
+-			action: 'resolve',
+-			server: 'china-dns',
+-			strategy: 'ipv4_only'
+-		});
+-		push(config.route.rules, {
+-			rule_set: 'geoip-cn',
+-			action: 'route',
+-			outbound: 'direct-out'
+-		});
++		/* Two paths only: geosite-cn above goes direct (its real CN IPs are
++		 * also bypassed in nftables); everything else arrives as FakeIP and
++		 * goes through the proxy. No QUIC through the tunnel: QUIC inside
++		 * HY2 datagrams gets fragmented and retransmitted whole; rejecting
++		 * UDP/443 makes browsers fall back to TCP at once. */
+ 		push(config.route.rules, {
+ 			network: 'udp',
+ 			port: 443,
+diff --git a/root/etc/homeproxy/scripts/update_resources.sh b/root/etc/homeproxy/scripts/update_resources.sh
+index eac0bb3..42ae7cf 100755
+--- a/root/etc/homeproxy/scripts/update_resources.sh
++++ b/root/etc/homeproxy/scripts/update_resources.sh
+@@ -15,7 +15,6 @@ RESULT_PATH="$RUN_DIR/update_resources.result"
+ CN_IP_SOURCE="${CN_IP_SOURCE:-https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@meta/geo/geoip/cn.list}"
+ # Mainland China domain binary rule-set for sing-box (pre-compiled .srs,
+ # same MetaCubeX data as the Mihomo .mrs used by Nikki).
+-GEOSITE_NONCN_SOURCE="${GEOSITE_NONCN_SOURCE:-https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geosite/geolocation-!cn.srs}"
+ GEOSITE_SOURCE="${GEOSITE_SOURCE:-https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geosite/cn.srs}"
+ DASHBOARD_SOURCE="${DASHBOARD_SOURCE:-https://codeload.github.com/SagerNet/sing-box-dashboard/zip/refs/heads/gh-pages}"
+ DASHBOARD_VERSION_URL="${DASHBOARD_VERSION_URL:-https://github.com/SagerNet/sing-box-dashboard/commits/gh-pages.atom}"
+@@ -270,12 +269,15 @@ cn_ip_list_bak="$RESOURCES_DIR/cn_ip.list.bak"
+ cn_ip_ver_bak="$RESOURCES_DIR/cn_ip.ver.bak"
+ [ -f "$cn_ip_list" ] && { cp -f "$cn_ip_list" "$cn_ip_list_bak" || log "[RESOURCES] WARN: failed to backup cn_ip.list (disk full?)"; }
+ [ -f "$cn_ip_ver" ] && { cp -f "$cn_ip_ver" "$cn_ip_ver_bak" || log "[RESOURCES] WARN: failed to backup cn_ip.ver (disk full?)"; }
++# Rule-sets no longer used by the two-path routing (domain list + CN IPs
++# in nftables); drop copies left by older versions.
++rm -f "$RESOURCES_DIR/geosite_noncn.srs" "$RESOURCES_DIR/geosite_noncn.ver" \
++	"$RESOURCES_DIR/geoip_cn.srs" "$RESOURCES_DIR/geoip_cn.ver"
+ # Defer cn_ip .ver commit until firewall refresh succeeds (see install_resource).
+ CN_IP_DEFER_VER=1
+ update_hashed_resource "cn_ip" "$CN_IP_SOURCE" "list" "validate_cidr_list" || mark_failed "cn_ip"
+ CN_IP_DEFER_VER=0
+ update_hashed_resource "geosite_cn" "$GEOSITE_SOURCE" "srs" "validate_rule_set" || mark_failed "geosite_cn"
+-update_hashed_resource "geosite_noncn" "$GEOSITE_NONCN_SOURCE" "srs" "validate_rule_set" || mark_failed "geosite_noncn"
+ update_dashboard || mark_failed "dashboard"
+ 
+ if [ -n "$FAILED_BRANCHES" ]; then

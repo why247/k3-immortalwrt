@@ -1,6 +1,8 @@
+diff --git a/root/etc/homeproxy/scripts/generate_client.uc b/root/etc/homeproxy/scripts/generate_client.uc
+index ff79d73..ee51c50 100755
 --- a/root/etc/homeproxy/scripts/generate_client.uc
 +++ b/root/etc/homeproxy/scripts/generate_client.uc
-@@ -180,21 +180,21 @@
+@@ -185,21 +185,21 @@ function domain_group_outbound_tag(group) {
  	return get_node_outbound_tag(group.node);
  }
  
@@ -29,15 +31,22 @@
  const log_level = uci.get(uciconfig, ucimain, 'log_level') || 'warn';
  const dashboard_path = HP_DIR + '/dashboard';
  const dashboard_enabled = uci.get(uciconfig, ucimain, 'dashboard_enabled') === '1' &&
-@@ -202,7 +202,6 @@
-       dashboard_port = strToInt(uci.get(uciconfig, ucimain, 'dashboard_port')),
-       dashboard_secret = uci.get(uciconfig, ucimain, 'dashboard_secret');
- const force_proxy_rules = hasForceProxyRules(uci, uciconfig, has_domain_proxy_rules);
--const fast_bypass_mainland = routing_mode === 'bypass_mainland_china' && !force_proxy_rules;
- /* UCI config end */
- 
- /* Config helper start */
-@@ -289,24 +288,27 @@
+@@ -286,38 +286,33 @@ function push_route(rules, match_rule, outbound, invert) {
+ function push_bypass(rules, match_rule) {
+ 	if (!match_rule)
+ 		return;
+-	/* A socket routed through the TUN fallback table can already have a TUN
+-	   source address, notably with source-specific IPv6 WAN defaults. Kernel
+-	   bypass cannot restore a WAN source; leave these flows to normal routing. */
+ 	push(rules, {
+-		type: 'logical',
+-		mode: 'and',
+-		rules: [
+-			match_rule,
+-			{ source_ip_cidr: [tun_addr4, tun_addr6], invert: true }
+-		],
++		...match_rule,
+ 		action: 'bypass'
  	});
  }
  
@@ -70,7 +79,7 @@
  }
  
  function merge_matches(matches) {
-@@ -342,21 +344,21 @@
+@@ -353,21 +348,21 @@ function add_control_pre_match_policy_rules(rules, proxy_outbound) {
  	const control = get_control_matches();
  
  	if (control.restrict_to_list)
@@ -99,7 +108,7 @@
  }
  
  function add_control_policy_rules(rules, proxy_outbound) {
-@@ -367,7 +369,7 @@
+@@ -378,7 +373,7 @@ function add_control_policy_rules(rules, proxy_outbound) {
  	   mode needs a normal-path counterpart: otherwise traffic from devices that
  	   are not in either list falls through to the proxied final outbound. */
  	if (control.restrict_to_list)
@@ -108,7 +117,7 @@
  
  	push_route(rules, control.direct_source, 'direct-out');
  
-@@ -425,15 +427,23 @@
+@@ -436,15 +431,23 @@ function parse_dnsserver(server_addr, default_protocol) {
  
  function generate_outbound(node) {
  	const outbound = renderOutbound(node);
@@ -134,7 +143,7 @@
  	return endpoint;
  }
  
-@@ -563,25 +573,21 @@
+@@ -565,25 +568,21 @@ if (!isEmpty(main_node)) {
  			...parse_dnsserver(china_dns_server)
  		});
  
@@ -168,7 +177,7 @@
  		});
  	}
  }
-@@ -606,19 +612,21 @@
+@@ -608,18 +607,21 @@ push(config.inbounds, {
  	set_system_proxy: false
  });
  
@@ -177,21 +186,21 @@
  push(config.inbounds, {
 -	type: 'tun',
 -	tag: 'tun-in',
-+	type: 'redirect',
-+	tag: 'redirect-in',
-+	listen: '::',
-+	listen_port: int(redirect_port)
-+});
- 
+-
 -	interface_name: tun_name,
 -	address: [tun_addr4, tun_addr6],
 -	mtu: strToInt(tun_mtu),
 -	auto_route: true,
 -	auto_redirect: true,
--	route_exclude_address_set: fast_bypass_mainland ? ['geoip-cn'] : null,
 -	include_interface: length(listen_interfaces) ? listen_interfaces : null,
 -	udp_timeout,
 -	multi_queue
++	type: 'redirect',
++	tag: 'redirect-in',
++	listen: '::',
++	listen_port: int(redirect_port)
++});
++
 +push(config.inbounds, {
 +	type: 'tproxy',
 +	tag: 'tproxy-in',
@@ -201,7 +210,7 @@
  });
  /* Inbound end */
  
-@@ -640,14 +648,17 @@
+@@ -641,14 +643,17 @@ if (tailscale_enabled)
  			tailscale_exit_node_allow_lan_access : null,
  		advertise_routes: tailscale_advertise_routes,
  		advertise_exit_node: tailscale_advertise_exit_node,
@@ -221,16 +230,16 @@
  	}
  ];
  
-@@ -739,7 +750,7 @@
- 		strategy: dns_default_strategy
- 	};
+@@ -739,7 +744,7 @@ if (!isEmpty(main_node)) {
+ 		(routing_mode === 'bypass_mainland_china') ? 'china-dns' : 'default-dns'
+ 	);
  
 -	/* Native auto_redirect pre-match: handle device and address exceptions first. */
 +	/* Transparent proxy pre-match: handle device and address exceptions first. */
  	const pre_match_control = add_control_pre_match_policy_rules(config.route.rules, 'main-out');
  
  	for (let group in domain_groups) {
-@@ -749,7 +760,7 @@
+@@ -749,7 +754,7 @@ if (!isEmpty(main_node)) {
  			if (!length(domains))
  				continue;
  
@@ -239,17 +248,17 @@
  			if (group.kind === 'direct')
  				push_bypass(config.route.rules, match_rule);
  			else
-@@ -764,8 +775,7 @@
+@@ -764,8 +769,7 @@ if (!isEmpty(main_node)) {
  	add_control_pre_match_fallback_rules(config.route.rules, pre_match_control);
  
- 	if (routing_mode === 'bypass_mainland_china' && force_proxy_rules) {
+ 	if (routing_mode === 'bypass_mainland_china') {
 -		push_bypass(config.route.rules, tun_match({ rule_set: 'geosite-cn' }));
 -		push_bypass(config.route.rules, tun_match({ rule_set: 'geoip-cn' }));
 +		push_bypass(config.route.rules, proxy_match({ rule_set: 'geosite-cn' }));
  	}
  
  	push(config.route.rules, { action: 'sniff' });
-@@ -797,11 +807,6 @@
+@@ -797,11 +801,6 @@ if (!isEmpty(main_node)) {
  			action: 'route',
  			outbound: 'direct-out'
  		});

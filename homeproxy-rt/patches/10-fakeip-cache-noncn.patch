@@ -77,7 +77,7 @@ index c21d536..c2ced7c 100755
  # Mainland China domain binary rule-set for sing-box (pre-compiled .srs,
  # same MetaCubeX data as the Mihomo .mrs used by Nikki).
 +GEOSITE_NONCN_SOURCE="${GEOSITE_NONCN_SOURCE:-https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geosite/geolocation-!cn.srs}"
- GEOSITE_SOURCE="${GEOSITE_SOURCE:-https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo-lite/geosite/cn.srs}"
+ GEOSITE_SOURCE="${GEOSITE_SOURCE:-https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geosite/cn.srs}"
  DASHBOARD_SOURCE="${DASHBOARD_SOURCE:-https://codeload.github.com/SagerNet/sing-box-dashboard/zip/refs/heads/gh-pages}"
  DASHBOARD_VERSION_URL="${DASHBOARD_VERSION_URL:-https://github.com/SagerNet/sing-box-dashboard/commits/gh-pages.atom}"
 @@ -274,6 +275,7 @@ CN_IP_DEFER_VER=1

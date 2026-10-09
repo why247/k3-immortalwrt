@@ -6,7 +6,7 @@ set -e
 
 # HomeProxy + sing-box：仓库内固化版本，不再跟随上游（必须在 feeds install 之前）
 #   luci-app-homeproxy = VIKINGYFY/packages 23b2ec21 + homeproxy-rt/patches 01-15（已打好）
-#   sing-box           = 1.15.0-alpha.10，下面再改成 GO_ARM=5 + 精简 tags，固定在固件里
+#   sing-box           = 1.15.0-alpha.10，下面再改成 GO_ARM=7,softfloat + 精简 tags，固定在固件里
 rm -rf package/luci-app-homeproxy package/sing-box
 for HP_PKG in luci-app-homeproxy sing-box; do
 	tar -xzf "$GITHUB_WORKSPACE/homeproxy-rt/vendor/$HP_PKG.tar.gz" -C package || {
@@ -19,10 +19,11 @@ grep -m1 "PKG_UPSTREAM_VERSION" package/sing-box/Makefile
 # 安装 feeds（本地 package/ 已有 HomeProxy，feeds install 会跳过）
 ./scripts/feeds install -a
 
-# K3 (BCM4709/Cortex-A9) 无 VFP/NEON, Go 必须软浮点编译, 否则 illegal instruction
+# K3 (BCM4709/Cortex-A9) 无 VFP/NEON, Go 必须软浮点, 否则 illegal instruction
+# 用 GOARM=7,softfloat(Go>=1.22)：保留软浮点, 但原子操作/内存屏障改用 ARMv7 原生 LDREX/STREX/DMB, 不再走 GOARM=5 的内核辅助函数
 if [ -f package/sing-box/Makefile ]; then
-	sed -i '/golang-package\.mk/a GO_ARM:=5' package/sing-box/Makefile
-	echo "GO_ARM=5 forced for sing-box (after golang-package.mk include)"
+	sed -i '/golang-package\.mk/a GO_ARM:=7,softfloat' package/sing-box/Makefile
+	echo "GO_ARM=7,softfloat forced for sing-box (after golang-package.mk include)"
 else
 	echo "WARNING: package/sing-box/Makefile not found, skipping GO_ARM fix" >&2
 fi

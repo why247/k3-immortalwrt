@@ -94,7 +94,7 @@ setup_iface() { # radio band
 		set wireless.$s.encryption='$ENC'
 		set wireless.$s.wmm='1'
 		set wireless.$s.isolate='0'
-		set wireless.$s.multicast_to_unicast='1'
+		set wireless.$s.multicast_to_unicast='0'
 		set wireless.$s.dtim_period='1'
 		set wireless.$s.disabled='0'
 	EOF

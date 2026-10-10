@@ -1,0 +1,9 @@
+#!/bin/sh
+# fw4 每次 start/reload 重建 ft 后执行 k3-ft，把成员口补回卸载表
+uci -q delete firewall.k3ft
+uci -q set firewall.k3ft=include
+uci -q set firewall.k3ft.type='script'
+uci -q set firewall.k3ft.path='/usr/sbin/k3-ft'
+uci -q set firewall.k3ft.fw4_compatible='1'
+uci -q commit firewall
+exit 0

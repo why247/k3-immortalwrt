@@ -12,9 +12,10 @@
 # 用法： k3-wifi            首次/热插拔自动执行
 #        k3-wifi --force    强制按最优参数重置 WiFi
 
-SSID='jy'
-ENC='none'           # 与原仓库一致：开放网络。想加密改成 psk2+ccmp 并设置 KEY
-KEY=''
+SSID='XYG'          # 5G
+SSID_2G='xyg'   # 2.4G 单独命名：设备不在两个频段间跳，避开软件分载切换卡流 bug
+ENC='psk2+ccmp'           # 与原仓库一致：开放网络。想加密改成 psk2+ccmp 并设置 KEY
+KEY='15919507600'
 COUNTRY='US'         # 两个频段必须同一个国家码；US 在你设备上已验证 5G 160MHz 可用
 TXP_2G='15'          # dBm, ~32mW：2.4G 少用，压低功率让手机优先连 5G
 TXP_5G='25'          # dBm, ~316mW
@@ -80,7 +81,8 @@ count_2g_neighbors() {
 }
 
 setup_iface() { # radio band
-	local r=$1 b=$2 s i
+	local r=$1 b=$2 s i ssid=$SSID
+	[ "$2" = 2g ] && ssid=$SSID_2G
 	for i in $(uci -q show wireless | sed -n "s/^wireless\.\([^.=]*\)\.device='\{0,1\}$r'\{0,1\}$/\1/p"); do
 		uci -q delete wireless.$i
 	done
@@ -90,7 +92,7 @@ setup_iface() { # radio band
 		set wireless.$s.device='$r'
 		set wireless.$s.network='lan'
 		set wireless.$s.mode='ap'
-		set wireless.$s.ssid='$SSID'
+		set wireless.$s.ssid='$ssid'
 		set wireless.$s.encryption='$ENC'
 		set wireless.$s.wmm='1'
 		set wireless.$s.isolate='0'

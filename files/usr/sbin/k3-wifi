@@ -170,6 +170,7 @@ for e in $R5; do
 	EOF
 	setup_iface $r 5g
 	changed=1; log "$r($phy) -> 5G ch$CH_5G $HT_5G ${TXP_5G}dBm"
+	# 后台子进程必须关掉 fd 9（9>&-），否则一直拿着 flock，热插拔里的 k3-wifi 卡住，开机堵 5 分钟并误回退 80MHz
 	# 看门狗：首次开机固件加载+160MHz 初始化可能较慢；每 10s 检查，最多等 300s 才回退到 149/80MHz
 	( i=0
 	  while [ $i -lt 30 ]; do
@@ -183,7 +184,7 @@ for e in $R5; do
 	  uci -q set wireless.$r.k3_fallback='1'
 	  uci -q commit wireless
 	  logger -t k3-wifi "$r 160MHz failed, fallback ch$CH_5G_FB $HT_5G_FB"
-	  wifi reload ) </dev/null >/dev/null 2>&1 &
+	  wifi reload ) </dev/null >/dev/null 2>&1 9>&- &
 done
 
 if [ "$changed" = 1 ]; then

@@ -1,0 +1,13 @@
+#!/bin/sh
+# K3: 把 br-lan 的成员口(lan1-3、Wi-Fi AP)和 wan 加进 fw4 软件卸载表 ft。
+# fw4 只挂 br-lan/wan，而转发路径会解析到实际成员口，导致卸载几乎不命中（2026-10-10 实测 0 -> 9~54 条 OFFLOAD，sirq 40% -> ~5%）。
+# 用法：k3-ft [dev ...]；不带参数则加入 br-lan 当前全部成员口。
+nft list flowtable inet fw4 ft >/dev/null 2>&1 || exit 0
+if [ $# -eq 0 ]; then
+	for p in /sys/class/net/br-lan/brif/*; do [ -e "$p" ] && set -- "$@" "${p##*/}"; done
+fi
+for d in "$@"; do
+	[ -e "/sys/class/net/$d" ] || continue
+	nft add flowtable inet fw4 ft "{ devices = { \"$d\" } ; }" 2>/dev/null
+done
+exit 0

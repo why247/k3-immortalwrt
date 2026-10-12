@@ -15,6 +15,13 @@ for HP_PKG in luci-app-homeproxy sing-box; do
 	}
 done
 grep -m1 "PKG_UPSTREAM_VERSION" package/sing-box/Makefile
+# 补丁 17（cn_extra 国内补充域名）、18（国内域名并集 + 未知域名探测 + dnsmasq EDNS 512），与 OpenWRT-CI 同步
+for P in 17-cn-extra 18-cn-union-dnsmasq; do
+	patch -d package/luci-app-homeproxy -p1 --forward --fuzz=0 --batch < "$GITHUB_WORKSPACE/homeproxy-rt/patches/$P.patch" || {
+		echo "ERROR: HomeProxy patch $P failed" >&2
+		exit 1
+	}
+done
 
 # 安装 feeds（本地 package/ 已有 HomeProxy，feeds install 会跳过）
 ./scripts/feeds install -a

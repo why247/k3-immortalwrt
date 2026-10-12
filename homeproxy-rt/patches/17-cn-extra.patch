@@ -1,0 +1,47 @@
+diff -ruN a/root/etc/homeproxy/resources/cn_extra.txt b/root/etc/homeproxy/resources/cn_extra.txt
+--- a/root/etc/homeproxy/resources/cn_extra.txt
++++ b/root/etc/homeproxy/resources/cn_extra.txt
+@@ -0,0 +1,11 @@
++# Mainland domains missing from geosite-cn: one domain suffix per line.
++# Resolved by the mainland DNS and routed direct, like geosite-cn.
++# ByteDance (Douyin/Toutiao core APIs; upstream tags them global)
++snssdk.com
++bytelb.com
++vcloudapi.com
++bytevcloudapi.com
++toutiaopage.com
++ttwebview.com
++# Kuaishou API
++kuaishouzt.com
+diff -ruN a/root/etc/homeproxy/scripts/generate_client.uc b/root/etc/homeproxy/scripts/generate_client.uc
+--- a/root/etc/homeproxy/scripts/generate_client.uc
++++ b/root/etc/homeproxy/scripts/generate_client.uc
+@@ -413,6 +413,15 @@
+ 	r.required || (stat(HP_DIR + '/resources/' + r.file) || {}).size > 0);
+ const mainland_tags = map(mainland_rule_sets, (r) => r.tag);
+ 
++/* Mainland domains geosite-cn lacks (e.g. ByteDance snssdk.com, tagged
++ * global upstream, so Douyin/Toutiao APIs got FakeIP and went through the
++ * proxy). One domain suffix per line in cn_extra.txt; '#' starts a comment.
++ * Joined to the mainland tags: mainland DNS answers them and they go direct. */
++const cn_extra = filter(map(split(readfile(HP_DIR + '/resources/cn_extra.txt') || '', '\n'), (l) => trim(l)),
++	(l) => length(l) && substr(l, 0, 1) !== '#');
++if (length(cn_extra))
++	push(mainland_tags, 'geosite-cn-extra');
++
+ function add_mainland_rule_sets(rule_sets) {
+ 	for (let r in mainland_rule_sets)
+ 		push(rule_sets, {
+@@ -859,6 +868,12 @@
+ 
+ 	if (routing_mode === 'bypass_mainland_china') {
+ 		add_mainland_rule_sets(config.route.rule_set);
++		if (length(cn_extra))
++			push(config.route.rule_set, {
++				type: 'inline',
++				tag: 'geosite-cn-extra',
++				rules: [ { domain_suffix: cn_extra } ]
++			});
+ 	}
+ 
+ 	if (isEmpty(config.route.rule_set))

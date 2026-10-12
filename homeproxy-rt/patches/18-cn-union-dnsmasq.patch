@@ -1,0 +1,231 @@
+diff -ruN a/luci-app-homeproxy/root/etc/homeproxy/scripts/generate_client.uc b/luci-app-homeproxy/root/etc/homeproxy/scripts/generate_client.uc
+--- a/root/etc/homeproxy/scripts/generate_client.uc
++++ b/root/etc/homeproxy/scripts/generate_client.uc
+@@ -422,8 +422,22 @@
+ if (length(cn_extra))
+ 	push(mainland_tags, 'geosite-cn-extra');
+ 
++/* Unknown-domain probe (sing-box >= 1.14 evaluate/respond). A domain in
++ * neither the mainland lists nor geolocation-!cn is asked of the mainland
++ * DNS first: a mainland address is returned as-is (direct, right CDN node);
++ * anything else (foreign, poisoned, NXDOMAIN, empty) falls through to FakeIP.
++ * Known foreign domains skip the probe: no extra lookup, no leak to the ISP.
++ * Both rule-sets are built by update_resources.sh; until they exist the
++ * probe is simply off. */
++const probe_rule_sets = [
++	{ tag: 'geosite-noncn', file: 'geosite_noncn.srs' },
++	{ tag: 'geoip-cn', file: 'geoip_cn.srs' }
++];
++const probe_ready = length(filter(probe_rule_sets, (r) =>
++	(stat(HP_DIR + '/resources/' + r.file) || {}).size > 0)) === 2;
++
+ function add_mainland_rule_sets(rule_sets) {
+-	for (let r in mainland_rule_sets)
++	for (let r in [...mainland_rule_sets, ...(probe_ready ? probe_rule_sets : [])])
+ 		push(rule_sets, {
+ 			type: 'local',
+ 			tag: r.tag,
+@@ -602,6 +616,23 @@
+ 			action: 'route',
+ 			server: china_dns_tag
+ 		});
++		if (probe_ready) {
++			push(config.dns.rules, {
++				type: 'logical',
++				mode: 'and',
++				rules: [
++					{ rule_set: 'geosite-noncn', invert: true },
++					{ query_type: ['A', 'AAAA'] }
++				],
++				action: 'evaluate',
++				server: china_dns_tag
++			});
++			push(config.dns.rules, {
++				match_response: true,
++				rule_set: 'geoip-cn',
++				action: 'respond'
++			});
++		}
+ 		/* Non-mainland AAAA: answer empty at once so clients go straight to
+ 		 * the IPv4 FakeIP. Mainland AAAA (real addresses, above) stays, so
+ 		 * domestic sites keep native IPv6 when IPv6 support is on. */
+diff -ruN a/luci-app-homeproxy/root/etc/homeproxy/scripts/update_resources.sh b/luci-app-homeproxy/root/etc/homeproxy/scripts/update_resources.sh
+--- a/root/etc/homeproxy/scripts/update_resources.sh
++++ b/root/etc/homeproxy/scripts/update_resources.sh
+@@ -13,12 +13,19 @@
+ # Mainland China IP list (plain CIDR text) for the kernel-layer nftables
+ # bypass. Built daily by MetaCubeX.
+ CN_IP_SOURCE="${CN_IP_SOURCE:-https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@meta/geo/geoip/cn.list}"
+-# Mainland China domain binary rule-set for sing-box (pre-compiled .srs,
+-# same MetaCubeX data as the Mihomo .mrs used by Nikki).
+-GEOSITE_SOURCE="${GEOSITE_SOURCE:-https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geosite/cn.srs}"
++# Mainland China domains: MetaCubeX geosite cn (v2fly cn) UNION
++# felixonmars accelerated-domains (via Loyalsoldier china-list.txt), compiled
++# into one .srs on the router. MetaCubeX alone drops every domain that is
++# also tagged global upstream (ByteDance snssdk.com, kuaishouzt.com...), so
++# Douyin/Toutiao/Kuaishou APIs got FakeIP and went through the proxy; the
++# NS-based felix list keeps them. One merged matcher, no extra lookups.
++GEOSITE_SOURCE="${GEOSITE_SOURCE:-https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@meta/geo/geosite/cn.list}"
++CHINA_LIST_SOURCE="${CHINA_LIST_SOURCE:-https://cdn.jsdelivr.net/gh/Loyalsoldier/v2ray-rules-dat@release/china-list.txt}"
+ # China CDN domains missing from geosite cn (direct as well).
+ GEOSITE_MS_CN_SOURCE="${GEOSITE_MS_CN_SOURCE:-https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geosite/microsoft@cn.srs}"
+ GEOSITE_GAMES_CN_SOURCE="${GEOSITE_GAMES_CN_SOURCE:-https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geosite/category-games@cn.srs}"
++# Known foreign domains: skip the unknown-domain probe (see generate_client.uc).
++GEOSITE_NONCN_SOURCE="${GEOSITE_NONCN_SOURCE:-https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geosite/geolocation-!cn.srs}"
+ DASHBOARD_SOURCE="${DASHBOARD_SOURCE:-https://codeload.github.com/SagerNet/sing-box-dashboard/zip/refs/heads/gh-pages}"
+ DASHBOARD_VERSION_URL="${DASHBOARD_VERSION_URL:-https://github.com/SagerNet/sing-box-dashboard/commits/gh-pages.atom}"
+ USER_AGENT="HomeProxy resource updater"
+@@ -50,7 +57,7 @@
+ 	cn_ip|geosite_cn) ;;
+ 	# Extra mainland rule-sets: hot reload like geosite_cn, but the first
+ 	# install must regenerate the config so sing-box starts using it.
+-	geosite_ms_cn|geosite_games_cn)
++	geosite_ms_cn|geosite_games_cn|geosite_noncn|geoip_cn)
+ 		[ "$EXTRA_EXISTED" = 1 ] || CORE_UPDATED=1 ;;
+ 	*) CORE_UPDATED=1 ;;
+ 	esac
+@@ -194,6 +201,97 @@
+ 	log "[$resource] Successfully updated."
+ }
+ 
++# A domain list must be a real list, not an error page or a truncated file.
++validate_domain_list() {
++	[ "$(grep -c '^[+.a-z0-9]' "$1" 2>/dev/null)" -ge 50000 ]
++}
++
++# Merge both domain lists into one sing-box source and compile it here.
++# "+.x"/".x" (MetaCubeX) and plain felix lines are suffixes; other MetaCubeX
++# lines are exact domains. The hash covers both inputs, so the .srs is only
++# rebuilt (and sing-box only hot-reloads it) when either list changes.
++update_geosite_cn() {
++	local new_hash old_hash
++
++	if ! download "$GEOSITE_SOURCE" "$TMP_DIR/geosite_cn.list" ||
++	   ! download "$CHINA_LIST_SOURCE" "$TMP_DIR/china_list.txt"; then
++		log "[geosite_cn] Update failed while downloading."
++		return 1
++	fi
++	if ! validate_domain_list "$TMP_DIR/geosite_cn.list" ||
++	   ! validate_domain_list "$TMP_DIR/china_list.txt"; then
++		log "[geosite_cn] Update failed: downloaded list did not pass validation."
++		return 1
++	fi
++	new_hash="$(cat "$TMP_DIR/geosite_cn.list" "$TMP_DIR/china_list.txt" | sha256sum | awk '{print $1}')"
++	old_hash="$(cat "$RESOURCES_DIR/geosite_cn.ver" 2>/dev/null)"
++	if [ -n "$new_hash" ] && [ "$new_hash" = "$old_hash" ] && [ -s "$RESOURCES_DIR/geosite_cn.srs" ]; then
++		log "[geosite_cn] Already up to date ($(printf '%s' "$new_hash" | cut -c1-12))."
++		return 0
++	fi
++	if ! awk '
++		FNR == 1 { f++ }
++		/^[[:space:]]*(#|$)/ { next }
++		{
++			d = tolower($1); sub(/\r$/, "", d)
++			if (substr(d, 1, 2) == "+.") { d = substr(d, 3); sfx = 1 }
++			else if (substr(d, 1, 1) == ".") { d = substr(d, 2); sfx = 1 }
++			else sfx = (f == 2)
++			if (d !~ /^[a-z0-9._-]+$/) next
++			if (sfx) s[d] = 1; else full[d] = 1
++		}
++		END {
++			printf "{\"version\":2,\"rules\":[{\"domain_suffix\":["
++			n = 0; for (d in s) printf "%s\"%s\"", (n++ ? "," : ""), d
++			printf "],\"domain\":["
++			m = 0; for (d in full) if (!(d in s)) printf "%s\"%s\"", (m++ ? "," : ""), d
++			printf "]}]}\n"
++			exit (n < 50000)
++		}
++	' "$TMP_DIR/geosite_cn.list" "$TMP_DIR/china_list.txt" > "$TMP_DIR/geosite_cn.json" ||
++	   ! "$SING_BOX" rule-set compile -o "$TMP_DIR/geosite_cn.srs" "$TMP_DIR/geosite_cn.json" >>"$LOG_PATH" 2>&1 ||
++	   ! validate_rule_set "$TMP_DIR/geosite_cn.srs"; then
++		log "[geosite_cn] Update failed while building the merged rule-set."
++		return 1
++	fi
++	log "[geosite_cn] Local version: ${old_hash:-NOT FOUND}, latest version: $(printf '%s' "$new_hash" | cut -c1-12) (MetaCubeX cn + felix china-list)."
++	if ! install_resource "$TMP_DIR/geosite_cn.srs" "$new_hash" "geosite_cn" "srs"; then
++		log "[geosite_cn] Update failed while installing."
++		return 1
++	fi
++	log "[geosite_cn] Successfully updated."
++}
++
++# geoip-cn rule-set for the DNS probe, compiled from the same cn_ip.list the
++# nftables bypass uses, so DNS and firewall never disagree about "mainland".
++update_geoip_cn() {
++	local src="$TMP_DIR/cn_ip.list" new_hash old_hash
++	[ -s "$src" ] || src="$RESOURCES_DIR/cn_ip.list"
++	validate_cidr_list "$src" || { log "[geoip_cn] No valid cn_ip.list to build from."; return 1; }
++	new_hash="$(file_hash "$src")"
++	old_hash="$(cat "$RESOURCES_DIR/geoip_cn.ver" 2>/dev/null)"
++	if [ "$new_hash" = "$old_hash" ] && [ -s "$RESOURCES_DIR/geoip_cn.srs" ]; then
++		log "[geoip_cn] Already up to date ($(printf '%s' "$new_hash" | cut -c1-12))."
++		return 0
++	fi
++	if ! awk '
++		/^[[:space:]]*(#|$)/ { next }
++		{ c = $1; sub(/\r$/, "", c) }
++		c ~ /^[0-9a-fA-F:.]+\/[0-9]+$/ { printf "%s\"%s\"", (n++ ? "," : "{\"version\":2,\"rules\":[{\"ip_cidr\":["), c }
++		END { if (!n) exit 1; printf "]}]}\n" }
++	' "$src" > "$TMP_DIR/geoip_cn.json" ||
++	   ! "$SING_BOX" rule-set compile -o "$TMP_DIR/geoip_cn.srs" "$TMP_DIR/geoip_cn.json" >>"$LOG_PATH" 2>&1 ||
++	   ! validate_rule_set "$TMP_DIR/geoip_cn.srs"; then
++		log "[geoip_cn] Update failed while building the rule-set."
++		return 1
++	fi
++	if ! install_resource "$TMP_DIR/geoip_cn.srs" "$new_hash" "geoip_cn" "srs"; then
++		log "[geoip_cn] Update failed while installing."
++		return 1
++	fi
++	log "[geoip_cn] Successfully updated."
++}
++
+ versioned_url() {
+ 	case "$1" in
+ 	http://*|https://*) printf '%s?v=%s' "$1" "$2" ;;
+@@ -279,16 +377,14 @@
+ cn_ip_ver_bak="$RESOURCES_DIR/cn_ip.ver.bak"
+ [ -f "$cn_ip_list" ] && { cp -f "$cn_ip_list" "$cn_ip_list_bak" || log "[RESOURCES] WARN: failed to backup cn_ip.list (disk full?)"; }
+ [ -f "$cn_ip_ver" ] && { cp -f "$cn_ip_ver" "$cn_ip_ver_bak" || log "[RESOURCES] WARN: failed to backup cn_ip.ver (disk full?)"; }
+-# Rule-sets no longer used by the two-path routing (domain list + CN IPs
+-# in nftables); drop copies left by older versions.
+-rm -f "$RESOURCES_DIR/geosite_noncn.srs" "$RESOURCES_DIR/geosite_noncn.ver" \
+-	"$RESOURCES_DIR/geoip_cn.srs" "$RESOURCES_DIR/geoip_cn.ver"
+ # Defer cn_ip .ver commit until firewall refresh succeeds (see install_resource).
+ CN_IP_DEFER_VER=1
+ update_hashed_resource "cn_ip" "$CN_IP_SOURCE" "list" "validate_cidr_list" || mark_failed "cn_ip"
+ CN_IP_DEFER_VER=0
+-update_hashed_resource "geosite_cn" "$GEOSITE_SOURCE" "srs" "validate_rule_set" || mark_failed "geosite_cn"
+-for extra in "geosite_ms_cn $GEOSITE_MS_CN_SOURCE" "geosite_games_cn $GEOSITE_GAMES_CN_SOURCE"; do
++update_geosite_cn || mark_failed "geosite_cn"
++EXTRA_EXISTED=0; [ -s "$RESOURCES_DIR/geoip_cn.srs" ] && EXTRA_EXISTED=1
++update_geoip_cn || mark_failed "geoip_cn"
++for extra in "geosite_ms_cn $GEOSITE_MS_CN_SOURCE" "geosite_games_cn $GEOSITE_GAMES_CN_SOURCE" "geosite_noncn $GEOSITE_NONCN_SOURCE"; do
+ 	set -- $extra
+ 	EXTRA_EXISTED=0; [ -s "$RESOURCES_DIR/$1.srs" ] && EXTRA_EXISTED=1
+ 	update_hashed_resource "$1" "$2" "srs" "validate_rule_set" || mark_failed "$1"
+diff -ruN a/luci-app-homeproxy/root/etc/uci-defaults/luci-homeproxy b/luci-app-homeproxy/root/etc/uci-defaults/luci-homeproxy
+--- a/root/etc/uci-defaults/luci-homeproxy
++++ b/root/etc/uci-defaults/luci-homeproxy
+@@ -33,6 +33,22 @@
+ 	exit 1
+ fi
+ 
++# dnsmasq in front of sing-box (127.0.0.1#5333):
++#  - edns-packet-max 512: at 1232 sing-box relays the upstream answer with its
++#    authority/additional sections; dnsmasq then truncates it (TC) for clients
++#    without EDNS, whose first lookup of every domain came back empty. At 512
++#    sing-box trims the reply itself and the first answer is complete.
++#  - no min-cache-ttl / use-stale-cache: mainland CDN answers have short TTLs;
++#    pinning them for an hour keeps clients on overloaded or wrong nodes.
++if uci -q get dhcp.@dnsmasq[0] >/dev/null; then
++	uci -q batch <<-EOF >/dev/null
++		set dhcp.@dnsmasq[0].ednspacket_max='512'
++		delete dhcp.@dnsmasq[0].min_cache_ttl
++		delete dhcp.@dnsmasq[0].use_stale_cache
++		commit dhcp
++	EOF
++fi
++
+ rm -rf /tmp/luci-*
+ rm -f /etc/homeproxy/dashboard/.etag
+ [ ! -d /etc/homeproxy/dashboard ] || chmod -R a+rX /etc/homeproxy/dashboard

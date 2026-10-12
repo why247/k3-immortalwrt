@@ -10,7 +10,8 @@ config dnsmasq
 	option leasefile '/tmp/dhcp.leases'
 	option resolvfile '/tmp/resolv.conf.d/resolv.conf.auto'
 	option localservice '1'
-	option ednspacket_max '1232'
+	# 512: 1232 时 sing-box 大答复被 dnsmasq 截断成 TC，IoT 首次解析为空
+	option ednspacket_max '512'
 	# rebind 保护会误杀 sing-box Fake-IP v6, 上游是可信本地 sing-box
 	option rebind_protection '0'
 

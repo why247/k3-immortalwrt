@@ -1,0 +1,65 @@
+diff --git a/root/etc/homeproxy/scripts/generate_client.uc b/root/etc/homeproxy/scripts/generate_client.uc
+index 2d7b2c2..01fecb6 100755
+--- a/root/etc/homeproxy/scripts/generate_client.uc
++++ b/root/etc/homeproxy/scripts/generate_client.uc
+@@ -71,6 +71,11 @@ function add_inline_domain_rule_set(rule_sets, group, type) {
+ }
+ 
+ let wan_dns = ubus.call('network.interface', 'status', {'interface': 'wan'})?.['dns-server']?.[0];
++/* WAN DNS seen at generation time ('' = WAN had none yet, e.g. at boot or
++ * mid PPPoE redial, so the fallback below is used). Written to
++ * RUN_DIR/wan_dns; hotplug.d/iface/90-homeproxy-dns reloads when the real
++ * WAN DNS differs, so the fallback never sticks. */
++const wan_dns_seen = wan_dns || '';
+ if (!wan_dns)
+ 	wan_dns = (routing_mode === 'global') ? '9.9.9.9' : '223.5.5.5';
+ 
+@@ -950,5 +955,6 @@ if (dashboard_enabled || tailscale_enabled)
+ 	];
+ 
+ system('mkdir -p ' + RUN_DIR);
++writefile(RUN_DIR + '/wan_dns', wan_dns_seen);
+ if (!writefile(RUN_DIR + '/sing-box-c.json.new', sprintf('%.J\n', removeBlankAttrs(config))))
+ 	exit(1);
+diff --git a/root/etc/hotplug.d/iface/90-homeproxy-dns b/root/etc/hotplug.d/iface/90-homeproxy-dns
+new file mode 100644
+index 0000000..e8ba9c5
+--- /dev/null
++++ b/root/etc/hotplug.d/iface/90-homeproxy-dns
+@@ -0,0 +1,36 @@
++#!/bin/sh
++# HomeProxy reads WAN DNS once, when it builds its config.
++# Built before WAN has DNS (boot, PPPoE redial) it falls back
++# to 223.5.5.5 and stays there. On WAN ifup/ifupdate compare
++# the DNS the config used (RUN_DIR/wan_dns) with the live one
++# and reload on mismatch.
++
++[ "$INTERFACE" = "wan" ] || exit 0
++case "$ACTION" in
++ifup|ifupdate) ;;
++*) exit 0 ;;
++esac
++
++R="/var/run/homeproxy"
++L="/var/lock/homeproxy-dns"
++mkdir "$L" 2>/dev/null || exit 0
++
++(
++	trap 'rmdir "$L"' EXIT
++	# ~90s: wait for DNS and any concurrent start to finish
++	for i in 1 2 3 4 5 6 7 8 9; do
++		sleep 10
++		[ -s "$R/sing-box-c.json" ] || continue
++		[ -f "$R/wan_dns" ] || exit 0
++		cur="$(ifstatus wan | \
++			jsonfilter -e '@["dns-server"][0]')"
++		[ -n "$cur" ] || continue
++		old="$(cat "$R/wan_dns")"
++		[ "$cur" = "$old" ] && exit 0
++		echo "$(date '+%F %T') [DAEMON] WAN DNS $cur," \
++			"config had '$old', reloading." \
++			>> "$R/homeproxy.log"
++		/etc/init.d/homeproxy reload
++		exit 0
++	done
++) </dev/null >/dev/null 2>&1 &

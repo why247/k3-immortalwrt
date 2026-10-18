@@ -5,7 +5,7 @@ set -e
 ./scripts/feeds update -a
 
 # HomeProxy + sing-box：仓库内固化版本，不再跟随上游（必须在 feeds install 之前）
-#   luci-app-homeproxy = VIKINGYFY/packages 23b2ec21 + homeproxy-rt/patches 01-15（已打好）
+#   luci-app-homeproxy = VIKINGYFY/packages 23b2ec21 + homeproxy-rt/patches 01-21（已打好）
 #   sing-box           = 1.15.0-alpha.10，下面再改成 GO_ARM=7,softfloat + 精简 tags，固定在固件里
 rm -rf package/luci-app-homeproxy package/sing-box
 for HP_PKG in luci-app-homeproxy sing-box; do
@@ -15,13 +15,7 @@ for HP_PKG in luci-app-homeproxy sing-box; do
 	}
 done
 grep -m1 "PKG_UPSTREAM_VERSION" package/sing-box/Makefile
-# 补丁 17（cn_extra 国内补充域名）、18（国内域名并集 + 未知域名探测 + dnsmasq EDNS 512）、19（WAN DNS 自愈）、20（国内 DNS 备用 + default_mark），与 OpenWRT-CI 同步
-for P in 17-cn-extra 18-cn-union-dnsmasq 19-wan-dns-refresh 20-cn-dns-fallback 21-cn-dns-fast; do
-	patch -d package/luci-app-homeproxy -p1 --forward --fuzz=0 --batch < "$GITHUB_WORKSPACE/homeproxy-rt/patches/$P.patch" || {
-		echo "ERROR: HomeProxy patch $P failed" >&2
-		exit 1
-	}
-done
+# 补丁 17-21 已合并进 vendor 包（2026-10-18），不再在编译时打补丁
 
 # 安装 feeds（本地 package/ 已有 HomeProxy，feeds install 会跳过）
 ./scripts/feeds install -a

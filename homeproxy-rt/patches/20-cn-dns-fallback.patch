@@ -1,0 +1,114 @@
+diff --git a/root/etc/homeproxy/scripts/generate_client.uc b/root/etc/homeproxy/scripts/generate_client.uc
+index 01fecb6..70cd21e 100755
+--- a/root/etc/homeproxy/scripts/generate_client.uc
++++ b/root/etc/homeproxy/scripts/generate_client.uc
+@@ -120,6 +120,11 @@ if (routing_mode === 'bypass_mainland_china') {
+ /* The mainland DNS is normally the WAN DNS itself; reuse default-dns then
+  * instead of a duplicate server with its own connections and cache. */
+ const china_dns_tag = (china_dns_server === wan_dns) ? 'default-dns' : 'china-dns';
++/* Second mainland resolver from another provider, for the rare answer the
++ * first one returns without addresses (see the DNS rules). */
++let china_dns_backup = uci.get(uciconfig, ucimain, 'china_dns_backup');
++if (isEmpty(china_dns_backup) || type(china_dns_backup) !== 'string')
++	china_dns_backup = (china_dns_server === '223.5.5.5') ? '119.29.29.29' : '223.5.5.5';
+ const dns_default_strategy = (ipv6_support === '1') ? 'prefer_ipv6' : 'prefer_ipv4';
+ 
+ function make_domain_resolver(server) {
+@@ -131,7 +136,7 @@ function make_domain_resolver(server) {
+ 
+ /* Budget for the proxied probe query: the sing-box default of 10s is far too long
+    to stall on when the main DNS is unreachable, since the probe falls back anyway. */
+-const dns_evaluate_timeout = '3s';
++const dns_evaluate_timeout = '2s';
+ 
+ let domain_groups = [];
+ 
+@@ -616,6 +621,43 @@ if (!isEmpty(main_node)) {
+ 			inet4_range: '198.18.0.0/15'
+ 		});
+ 
++		/* ISP resolvers now and then return a CNAME chain without its
++		 * addresses (www.baidu.com -> www.a.shifen.com, no A). sing-box
++		 * would cache that and break the site until the TTL runs out, so
++		 * an address query of a mainland domain is answered by the
++		 * mainland DNS only when it carries an address; otherwise the
++		 * backup resolver is asked. */
++		push(config.dns.servers, {
++			tag: 'china-backup-dns',
++			type: 'udp',
++			server: china_dns_backup,
++			detour: null
++		});
++		const mainland_addr_query = {
++			type: 'logical',
++			mode: 'and',
++			rules: [
++				{ rule_set: mainland_tags },
++				{ query_type: ['A', 'AAAA'] }
++			]
++		};
++		push(config.dns.rules, {
++			...mainland_addr_query,
++			action: 'evaluate',
++			server: china_dns_tag,
++			timeout: dns_evaluate_timeout,
++			tag: 'cn'
++		});
++		push(config.dns.rules, {
++			match_response: 'cn',
++			ip_accept_any: true,
++			action: 'respond'
++		});
++		push(config.dns.rules, {
++			...mainland_addr_query,
++			action: 'route',
++			server: 'china-backup-dns'
++		});
+ 		push(config.dns.rules, {
+ 			rule_set: mainland_tags,
+ 			action: 'route',
+@@ -630,13 +672,34 @@ if (!isEmpty(main_node)) {
+ 					{ query_type: ['A', 'AAAA'] }
+ 				],
+ 				action: 'evaluate',
+-				server: china_dns_tag
++				server: china_dns_tag,
++				timeout: dns_evaluate_timeout
+ 			});
+ 			push(config.dns.rules, {
+ 				match_response: true,
+ 				rule_set: 'geoip-cn',
+ 				action: 'respond'
+ 			});
++			/* No address at all (bare CNAME or timeout): ask the backup
++			 * once before treating the domain as foreign. */
++			push(config.dns.rules, {
++				type: 'logical',
++				mode: 'and',
++				rules: [
++					{ rule_set: 'geosite-noncn', invert: true },
++					{ query_type: ['A'] },
++					{ match_response: true, ip_accept_any: true, invert: true }
++				],
++				action: 'evaluate',
++				server: 'china-backup-dns',
++				timeout: dns_evaluate_timeout,
++				tag: 'cn2'
++			});
++			push(config.dns.rules, {
++				match_response: 'cn2',
++				rule_set: 'geoip-cn',
++				action: 'respond'
++			});
+ 		}
+ 		/* Non-mainland AAAA: answer empty at once so clients go straight to
+ 		 * the IPv4 FakeIP. Mainland AAAA (real addresses, above) stays, so
+@@ -811,6 +874,8 @@ config.route = {
+ 	find_neighbor: has_mac_control() ? true : null
+ };
+ config.route.default_http_client = 'direct-http';
++/* Patch 20: mark DNS/default-dialer traffic so hp_*_out skips it. */
++config.route.default_mark = strToInt(self_mark);
+ 
+ /* Routing rules */
+ if (!isEmpty(main_node)) {

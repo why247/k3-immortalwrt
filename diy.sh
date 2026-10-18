@@ -15,8 +15,8 @@ for HP_PKG in luci-app-homeproxy sing-box; do
 	}
 done
 grep -m1 "PKG_UPSTREAM_VERSION" package/sing-box/Makefile
-# 补丁 17（cn_extra 国内补充域名）、18（国内域名并集 + 未知域名探测 + dnsmasq EDNS 512）、19（WAN DNS 自愈），与 OpenWRT-CI 同步
-for P in 17-cn-extra 18-cn-union-dnsmasq 19-wan-dns-refresh; do
+# 补丁 17（cn_extra 国内补充域名）、18（国内域名并集 + 未知域名探测 + dnsmasq EDNS 512）、19（WAN DNS 自愈）、20（国内 DNS 备用 + default_mark），与 OpenWRT-CI 同步
+for P in 17-cn-extra 18-cn-union-dnsmasq 19-wan-dns-refresh 20-cn-dns-fallback; do
 	patch -d package/luci-app-homeproxy -p1 --forward --fuzz=0 --batch < "$GITHUB_WORKSPACE/homeproxy-rt/patches/$P.patch" || {
 		echo "ERROR: HomeProxy patch $P failed" >&2
 		exit 1

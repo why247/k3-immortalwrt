@@ -1,0 +1,54 @@
+diff --git a/root/etc/homeproxy/scripts/generate_client.uc b/root/etc/homeproxy/scripts/generate_client.uc
+index 70cd21e..f2f6ea6 100755
+--- a/root/etc/homeproxy/scripts/generate_client.uc
++++ b/root/etc/homeproxy/scripts/generate_client.uc
+@@ -535,6 +535,10 @@ config.dns = {
+ 	],
+ 	rules: [],
+ 	reverse_mapping: true,
++	/* Expired entries are answered at once and refreshed in the background;
++	 * the default 1024 entries are too few for a whole household. */
++	optimistic: true,
++	cache_capacity: 8192,
+ 	strategy: dns_default_strategy
+ };
+ 
+@@ -653,6 +657,20 @@ if (!isEmpty(main_node)) {
+ 			ip_accept_any: true,
+ 			action: 'respond'
+ 		});
++		/* A definite answer needs no second opinion: NXDOMAIN, and an
++		 * AAAA with no address (IPv4-only site, the client falls back to
++		 * A). Only an A without address goes on to the backup. */
++		push(config.dns.rules, {
++			match_response: 'cn',
++			response_rcode: 'NXDOMAIN',
++			action: 'respond'
++		});
++		push(config.dns.rules, {
++			match_response: 'cn',
++			query_type: 'AAAA',
++			response_rcode: 'NOERROR',
++			action: 'respond'
++		});
+ 		push(config.dns.rules, {
+ 			...mainland_addr_query,
+ 			action: 'route',
+@@ -988,13 +1006,16 @@ if (!isEmpty(main_node)) {
+ const enable_clash_api = main_node === 'urltest';
+ /* store_fakeip keeps FakeIP mappings across sing-box restarts (daily
+  * resource update), so clients holding cached FakeIP answers keep working.
++ * store_dns does the same for the DNS cache (a reload also restarts
++ * dnsmasq, so without it every lookup goes upstream again), but only in
++ * tmpfs: with the Clash API the cache file sits on flash.
+  * Without the Clash API the cache lives in tmpfs to spare the flash. */
+ config.experimental = {
+ 	cache_file: {
+ 		enabled: true,
+ 		path: enable_clash_api ? HP_DIR + '/cache/cache.db' : RUN_DIR + '/cache.db',
+ 		store_fakeip: true,
+-		store_dns: false
++		store_dns: !enable_clash_api
+ 	}
+ };
+ if (enable_clash_api)

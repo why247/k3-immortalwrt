@@ -13,8 +13,8 @@
 #        k3-wifi --force    强制按最优参数重置 WiFi
 
 SSID='XYG'          # 5G
-SSID_2G='xyg'   # 2.4G 单独命名：设备不在两个频段间跳，避开软件分载切换卡流 bug
-ENC='psk2+ccmp'           # 与原仓库一致：开放网络。想加密改成 psk2+ccmp 并设置 KEY
+SSID_2G='XYG2.4'   # 2.4G 单独命名：设备不在两个频段间跳，避开软件分载切换卡流 bug
+ENC='psk2+ccmp'    # WPA2-PSK (CCMP)
 KEY='15919507600'
 COUNTRY='US'         # 两个频段必须同一个国家码；US 在你设备上已验证 5G 160MHz 可用
 TXP_2G='15'          # dBm, ~32mW：2.4G 少用，压低功率让手机优先连 5G

@@ -104,7 +104,8 @@ jobs:
           * 基本信息
           NAT 二级路由模式，WAN 口 DHCP（接上级路由 LAN）
           默认网关：192.168.1.1，LAN 侧开启 DHCP
-          WiFi: 双频同名 'jy'（开放网络，2.4G 自动选空闲信道 / 5G 36 VHT160，起不来自动回退 149 VHT80）
+          WiFi: 2.4G 'XYG2.4' / 5G 'XYG'，WPA2（2.4G 自动选空闲信道 / 5G 36 VHT160，起不来自动回退 149 VHT80）
+          LAN: 192.168.2.1
           账户: root
           密码: password
 

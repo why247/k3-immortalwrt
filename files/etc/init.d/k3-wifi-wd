@@ -1,0 +1,75 @@
+#!/bin/sh /etc/rc.common
+# 5G 160MHz 守护：每次开机都检查（不只首次）
+#   * 上次回退到 149/80 -> 本次开机先恢复 36/160 重试
+#   * 最多等 300s：5G AP 起不来 -> 回退 149/80，下次开机再试 160
+#   * AP 起来但实际不是 160MHz（固件因雷达降频）-> 只记日志
+#   * 你在 LuCI 里改成别的频宽/信道 -> 不干预
+START=99
+
+CH='36'; HT='VHT160'; CH_FB='149'; HT_FB='VHT80'
+WAIT=300
+log() { logger -t k3-wifi-wd "$*"; }
+
+r5() { # 5G radio 段落名
+	uci -q show wireless | sed -n \
+	 "s/^wireless\.\([^.=]*\)\.band='\{0,1\}5g'\{0,1\}$/\1/p" | head -n1
+}
+
+ap_ifc() { # radio -> 正在运行的 AP 接口名
+	ubus call network.wireless status 2>/dev/null | jsonfilter \
+	 -e "@.$1.interfaces[*].ifname" 2>/dev/null | head -n1
+}
+
+watch() {
+	local r=$1 i=0 ifc w
+	while [ $i -lt $WAIT ]; do
+		sleep 10; i=$((i+10))
+		ifc=$(ap_ifc $r)
+		[ -n "$ifc" ] || continue
+		iw dev "$ifc" info 2>/dev/null | grep -q 'type AP' || continue
+		w=$(iw dev "$ifc" info | sed -n 's/.*width: \([0-9]*\) MHz.*/\1/p')
+		ch=$(iw dev "$ifc" info | sed -n 's/.*channel \([0-9]*\) .*/\1/p')
+		if [ "$w" = 160 ]; then log "$r OK ch$ch 160MHz (${i}s)"
+		else log "$r up ch$ch ${w:-?}MHz, not 160 (radar/firmware)"; fi
+		return 0
+	done
+	[ "$(uci -q get wireless.$r.htmode)" = "$HT" ] || return 0
+	uci -q set wireless.$r.channel="$CH_FB"
+	uci -q set wireless.$r.htmode="$HT_FB"
+	uci -q set wireless.$r.k3_fallback='1'
+	uci -q commit wireless
+	log "$r no AP after ${WAIT}s at 160MHz, fallback ch$CH_FB $HT_FB"
+	wifi reload
+}
+
+start() {
+	local r
+	(
+	  # 首次开机 radio 可能还没配好，等 k3-wifi 打完标记
+	  i=0
+	  while [ $i -lt 60 ]; do
+		r=$(r5); [ -n "$r" ] && \
+		 [ "$(uci -q get wireless.$r.k3_tuned)" = 1 ] && break
+		sleep 5; i=$((i+5))
+	  done
+	  [ -n "$r" ] || exit 0
+	  if [ "$(uci -q get wireless.$r.k3_fallback)" = 1 ]; then
+		# 只在仍是我们设的回退值时才恢复，用户手改的不动
+		if [ "$(uci -q get wireless.$r.htmode)" = "$HT_FB" ] && \
+		   [ "$(uci -q get wireless.$r.channel)" = "$CH_FB" ]; then
+			uci -q set wireless.$r.channel="$CH"
+			uci -q set wireless.$r.htmode="$HT"
+			uci -q delete wireless.$r.k3_fallback
+			uci -q commit wireless
+			log "$r retry ch$CH $HT"
+			wifi reload
+		else
+			uci -q delete wireless.$r.k3_fallback
+			uci -q commit wireless
+			exit 0
+		fi
+	  fi
+	  [ "$(uci -q get wireless.$r.htmode)" = "$HT" ] || exit 0
+	  watch $r
+	) </dev/null >/dev/null 2>&1 &
+}

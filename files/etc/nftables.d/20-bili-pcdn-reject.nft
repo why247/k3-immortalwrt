@@ -1,0 +1,6 @@
+chain bili_pcdn_reject {
+    type filter hook forward priority -1; policy accept;
+    iifname "br-lan" oifname != "br-lan" meta l4proto tcp tcp flags & (syn|ack) == syn tcp dport { 4480, 8000, 23861, 33861, 43861, 53861, 63861 } counter reject with tcp reset comment "bili-pcdn-tcp"
+    iifname "br-lan" oifname != "br-lan" meta l4proto udp udp dport 3478 counter reject comment "bili-stun"
+    iifname "br-lan" oifname != "br-lan" ip daddr 10.0.0.0/8 meta l4proto udp counter reject comment "bili-p2p-priv"
+}

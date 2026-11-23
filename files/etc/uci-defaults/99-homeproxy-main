@@ -1,0 +1,8 @@
+#!/bin/sh
+s=$(uci -q -X show homeproxy | sed -n "s/^homeproxy\.\([^.]*\)\.label='why hysteria2'$/\1/p" | head -n1)
+if [ -n "$s" ]; then
+	uci -q set homeproxy.config.main_node="$s"
+	uci -q commit homeproxy
+	logger -t homeproxy-main "main_node -> $s (why hysteria2)"
+fi
+exit 0

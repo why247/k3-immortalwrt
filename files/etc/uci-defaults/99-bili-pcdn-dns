@@ -1,0 +1,8 @@
+#!/bin/sh
+# B站 PCDN 域名屏蔽 (dnsmasq 返回 NXDOMAIN, App 回退正规 CDN)
+for d in mcdn.bilivideo.cn mcdn.bilivideo.com szbdyd.com mountaintoys.cn; do
+	uci -q del_list dhcp.@dnsmasq[0].address="/$d/"
+	uci -q add_list dhcp.@dnsmasq[0].address="/$d/"
+done
+uci -q commit dhcp
+exit 0
